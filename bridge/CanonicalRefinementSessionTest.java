@@ -128,6 +128,10 @@ public final class CanonicalRefinementSessionTest {
                 "final=false must keep complex greenfield generation in DEAL");
         check(toolNames(next).contains("query_deal_module"),
                 "the next DEAL revision must expose a fresh compiler surface");
+        check(!toolNames(next).contains("query_deal_symbol"),
+                "completed bootstrap declarations must become read-only index entries");
+        check(!toolNames(next).contains("query_deal_node"),
+                "completed bootstrap bodies must not distract later greenfield rounds");
         check(!next.contains("\"operation\":{\"const\":\"replaceDeclaration\"}"),
                 "accepted AppState bootstrap must not be replaceable again");
         check(!next.contains("\"operation\":{\"const\":\"replaceFunctionBody\"}"),

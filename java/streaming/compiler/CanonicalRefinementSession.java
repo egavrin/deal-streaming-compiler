@@ -299,8 +299,10 @@ public final class CanonicalRefinementSession {
         boolean repairing = !repairScopes.isEmpty();
         if (!repairing && !forcedArtifact.equals("dealui")) {
             addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
-            addQueryTool(result, "query_deal_symbol", "Read one DEAL declaration and dependency summary.", "S");
-            addQueryTool(result, "query_deal_node", "Read one DEAL function or block body.", "B");
+            if (!generation || !appStateBootstrapReplaced || !initialStateBootstrapReplaced) {
+                addQueryTool(result, "query_deal_symbol", "Read one DEAL declaration and dependency summary.", "S");
+                addQueryTool(result, "query_deal_node", "Read one DEAL function or block body.", "B");
+            }
         }
         if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
             addQueryTool(result, "query_deal_ui_document", "Unlock adding a new Deal UI view.", "D");
