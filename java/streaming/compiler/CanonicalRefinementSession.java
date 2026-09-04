@@ -52,6 +52,8 @@ public final class CanonicalRefinementSession {
             Never put several declarations in one string and never replace a function declaration
             and its body together. Example shape: replaceDeclaration(AppState),
             replaceFunctionBody(initialState body), addDeclaration(Action), addDeclaration(handler).
+            In declarations, call finish_deal as soon as the existing accepted declarations satisfy
+            the request. Never resubmit an existing declaration merely to transition to Deal UI.
 
             DEAL is a mutable TypeScript-shaped subset. Use exported nominal classes, initialState,
             nominal actions ending in Action, and @ui-update handlers that return a complete new
@@ -254,6 +256,7 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_document" -> queryDealUiDocument(string(arguments, "target"));
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
             case "apply_deal_changes" -> applyDeal(arguments);
+            case "finish_deal" -> finishDeal();
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "unchanged" -> unchanged();
             default -> throw new IllegalArgumentException("Unsupported streaming-compiler tool: " + name);
@@ -346,6 +349,11 @@ public final class CanonicalRefinementSession {
                     : "Apply one atomic DEAL ChangeSet.";
             result.add(transactionTool("apply_deal_changes", description, dealOperations));
         }
+        if (generation && generationStage().equals("declarations")) {
+            result.add(tool("finish_deal",
+                    "Current checked DEAL behavior is complete. Transition to Deal UI without changing source.",
+                    objectSchema(Map.of("reason", Map.of("type", "string")))));
+        }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
         if (!uiOperations.isEmpty()) {
             result.add(transactionTool("apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations));
@@ -370,7 +378,7 @@ public final class CanonicalRefinementSession {
             case "bootstrap" -> "Replace AppState and initialState together, then continue with final=false.";
             case "app-state" -> "Replace only the missing AppState declaration; do not add or redeclare it.";
             case "initial-state" -> "Replace only the missing initialState body; do not redeclare AppState.";
-            case "declarations" -> "AppState and initialState are committed. Add only new action, helper, and handler declarations with unique names.";
+            case "declarations" -> "AppState and initialState are committed. Add only missing unique action, helper, and handler declarations. If existing behavior is complete, call finish_deal immediately.";
             case "ui" -> "Build Deal UI only against the checked AppInterface and component pack.";
             default -> throw new IllegalStateException("Unknown generation stage " + generationStage());
         };
@@ -598,6 +606,17 @@ public final class CanonicalRefinementSession {
                 node.id().equals(replace.targetId())
                         && inspection.deal().symbols().stream().anyMatch(symbol ->
                                 symbol.id().equals(node.ownerId()) && symbol.name().equals("initialState")));
+    }
+
+    private void finishDeal() {
+        if (!generation || !generationStage().equals("declarations") || !inspection.valid()) {
+            throw new IllegalArgumentException("finish_deal requires valid generated DEAL after bootstrap");
+        }
+        forcedArtifact = "dealui";
+        repairScopes = List.of();
+        repairDiagnostics = List.of();
+        transcript.clear();
+        resetSurface();
     }
 
     private void applyDealUi(CanonicalJson.Obj arguments) {

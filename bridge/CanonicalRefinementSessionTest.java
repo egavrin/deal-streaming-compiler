@@ -139,6 +139,8 @@ public final class CanonicalRefinementSessionTest {
                 "the compact input must identify the declarations-only stage");
         check(stringField(input, "stageObjective").contains("committed"),
                 "the compact input must state that bootstrap symbols are immutable");
+        check(toolNames(next).contains("finish_deal"),
+                "declarations stage must allow a source-free transition to Deal UI");
         String declarationsWrite = session.acceptToolCallJson(
                 "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         check(declarationsWrite.contains("Bootstrap is committed"),
@@ -149,6 +151,10 @@ public final class CanonicalRefinementSessionTest {
                 "accepted initialState bootstrap must not be replaceable again");
         check(!toolNames(next).contains("query_deal_ui_view"),
                 "Deal UI must remain hidden until DEAL final=true");
+        String ui = session.acceptToolCallJson(
+                "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
+        check(toolNames(ui).contains("query_deal_ui_view"),
+                "finish_deal must expose Deal UI without another DEAL mutation");
     }
 
     private static void greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState() {
