@@ -66,7 +66,8 @@ public final class CanonicalRefinementSession {
         this.maxSemanticRepairs = maxSemanticRepairs;
         this.inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         if (!inspection.valid()) {
-            throw new IllegalArgumentException("Cannot refine an invalid canonical application");
+            throw new IllegalArgumentException(
+                    "Cannot refine an invalid canonical application: " + inspection.diagnostics());
         }
     }
 
