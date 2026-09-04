@@ -724,7 +724,6 @@ public final class CanonicalRefinementSession {
                 "v2Accepted", checkedAccepted,
                 "sourceDigestEqual", shadowDigest.equals(checkedDigest),
                 "equal", equal));
-        if (!equal) throw new IllegalStateException("Compiler protocol v1/v2 shadow mismatch for " + artifact);
     }
 
     private static boolean isPreconditionRejection(List<StructuredDiagnostic> diagnostics) {

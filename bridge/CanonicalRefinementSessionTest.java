@@ -52,6 +52,7 @@ public final class CanonicalRefinementSessionTest {
         greenfieldFinalFalseKeepsBuildingDeal();
         acceptedChangeSetResetsTheLocalRepairBudget();
         greenfieldNoOpBecomesScopedRepair();
+        stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
@@ -267,6 +268,37 @@ public final class CanonicalRefinementSessionTest {
                 "duplicate-only greenfield repair must allow completion");
         check(!toolNames(repair).contains("apply_deal_changes"),
                 "duplicate-only greenfield repair must not allow another addDeclaration");
+    }
+
+    private static void stricterCheckedContractBecomesRepairInsteadOfShadowCrash() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create an app", 8, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { title: string = \"Ready\"; }"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {title: \"Ready\"};")), false));
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class RunAction {}"),
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", """
+                        export function run(state: AppState, action: RunAction): AppState {
+                          // @ui-update
+                          return state;
+                        }
+                        """)), false));
+        check(stringField(object(repair), "status").equals("request"),
+                "a stricter checked-contract rejection must remain repairable");
+        check(repair.contains("UI2050"),
+                "the v2 framework diagnostic must reach the repair surface");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
