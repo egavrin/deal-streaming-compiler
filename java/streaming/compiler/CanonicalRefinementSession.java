@@ -42,8 +42,12 @@ public final class CanonicalRefinementSession {
             be batched. Set final=true only when behavior is complete. For a complex application,
             set final=false, inspect the new revision, and continue with another small transaction.
             Never return prose.
-            Obey generationStage. In bootstrap, replace AppState and initialState. In app-state or
-            initial-state, complete only the named missing bootstrap unit. In declarations, both
+            Obey generationStage. In bootstrap, replace AppState and initialState and add any
+            field-only nominal record types referenced by AppState in the same atomic ChangeSet.
+            Query the module together with both bootstrap units before that write. Every collection
+            rendered as repeated UI must contain nominal items with a stable int or string id/key;
+            shape nested visual data as keyed record collections, not primitive nested arrays. In
+            app-state or initial-state, complete only the named missing bootstrap unit. In declarations, both
             bootstrap units are committed and immutable: use only one addDeclaration operation per
             new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
             Each declaration operation contains exactly one top-level class or function. Replace
@@ -84,7 +88,10 @@ public final class CanonicalRefinementSession {
             Deal UI is declarative and read-only. Use only components and tokens in componentPack,
             field paths from interface, action constructors, literals, When and ForEach. It has no
             indexing, array/object literals, assignments, arbitrary calls, length, methods or
-            string-number coercion. Dynamic collections use ForEach with stable item keys. Bind all
+            string-number coercion or ternary expressions. Dynamic collections use exactly
+            ForEach(state.items, item: app.Item, key: item.id) { ui.Text(value: item.label) }.
+            Do not use ui.ForEach, item in, lambdas or a body parameter line. Use === and !== for
+            equality and When(condition) { ... } Else { ... } for visual branches. Bind all
             reachable input actions. Use semantic native components, one app-owned AppTheme, an
             adaptive Root, accessible labels, and Canvas/PointerSurface only for spatial content.
             Make the result polished and responsive without scenario-specific native components.
@@ -322,7 +329,7 @@ public final class CanonicalRefinementSession {
         boolean repairing = !repairScopes.isEmpty();
         if (!repairing && !forcedArtifact.equals("dealui")) {
             boolean bootstrapComplete = appStateBootstrapReplaced && initialStateBootstrapReplaced;
-            if (!generation || bootstrapComplete) {
+            if (!generation || bootstrapComplete || generationStage().equals("bootstrap")) {
                 addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
             }
             if (!generation) {
@@ -378,7 +385,7 @@ public final class CanonicalRefinementSession {
 
     private String generationStageObjective() {
         return switch (generationStage()) {
-            case "bootstrap" -> "Replace AppState and initialState together, then continue with final=false.";
+            case "bootstrap" -> "Query the module and both bootstrap units. In one transaction add supporting field-only record types, replace AppState, and replace initialState; continue with final=false.";
             case "app-state" -> "Replace only the missing AppState declaration; do not add or redeclare it.";
             case "initial-state" -> "Replace only the missing initialState body; do not redeclare AppState.";
             case "declarations" -> "AppState and initialState are committed. Add only missing unique action, helper, and handler declarations. If existing behavior is complete, call finish_deal immediately.";

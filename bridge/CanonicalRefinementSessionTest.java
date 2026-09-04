@@ -67,17 +67,22 @@ public final class CanonicalRefinementSessionTest {
                 "greenfield generation must start with DEAL");
         check(!toolNames(initial).contains("query_deal_ui_view"),
                 "Deal UI must stay hidden until DEAL is accepted");
+        check(toolNames(initial).contains("query_deal_module"),
+                "greenfield bootstrap must permit supporting nominal record declarations");
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
         session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
                 Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)),
+                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")))));
         String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class Item { id: int = 0; label: string = \"\"; }"),
                 Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { count: int = 0; }"),
+                        "declaration", "export class AppState { count: int = 0; items: Item[] = []; }"),
                 Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {count: 0};")), false));
+                        "body", "return {count: 0, items: []};")), false));
         session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "addDeclaration", "target", "M1",
@@ -99,6 +104,8 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI surface must state its compact call syntax: " + dealAccepted);
         check(dealAccepted.contains("state.score"),
                 "Deal UI surface must identify the root state path: " + dealAccepted);
+        check(dealAccepted.contains("ForEach(state.items, item: app.Item, key: item.id)"),
+                "the Deal UI contract must publish the exact collection syntax");
         String view = uiViewAlias(dealAccepted, "App");
         String uiWrite = session.acceptToolCallJson(
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
