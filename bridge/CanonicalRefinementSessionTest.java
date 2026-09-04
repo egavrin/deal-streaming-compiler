@@ -48,6 +48,7 @@ public final class CanonicalRefinementSessionTest {
         uiOnlyChangeNeverTouchesDeal();
         uiDocumentQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
+        greenfieldFinalFalseKeepsBuildingDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -103,6 +104,32 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "greenfield canonical app must complete");
         check(stringField(object, "deal").contains("IncrementAction"), "generated DEAL must be retained");
         check(stringField(object, "dealUi").contains("ui.Button"), "generated Deal UI must be retained");
+    }
+
+    private static void greenfieldFinalFalseKeepsBuildingDeal() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a complex app", 6, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+        String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { count: int = 0; }"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {count: 0};")), false));
+        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
+        check(stringField(input, "requiredArtifact").equals("deal"),
+                "final=false must keep complex greenfield generation in DEAL");
+        check(toolNames(next).contains("query_deal_module"),
+                "the next DEAL revision must expose a fresh compiler surface");
+        check(!toolNames(next).contains("query_deal_ui_view"),
+                "Deal UI must remain hidden until DEAL final=true");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {

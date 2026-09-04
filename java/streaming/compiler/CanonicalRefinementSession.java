@@ -39,7 +39,9 @@ public final class CanonicalRefinementSession {
             Create the behavior of one complete canonical DEAL application through the compact
             compiler surface. Query the DEAL module and bootstrap declarations, then submit one
             cohesive atomic transaction. Emit exactly one write tool call; read-only queries may
-            be batched. Never return prose.
+            be batched. Set final=true only when behavior is complete. For a complex application,
+            set final=false, inspect the new revision, and continue with another small transaction.
+            Never return prose.
             Each declaration operation contains exactly one top-level class or function. Replace
             bootstrap AppState once, replace only the statements inside initialState, and add every
             other class or function with a separate addDeclaration operation in the same ChangeSet.
@@ -480,10 +482,12 @@ public final class CanonicalRefinementSession {
         }
         deal = result.source();
         repairScopes = List.of();
-        forcedArtifact = generation ? "dealui" : result.impact().interfaceChanged() ? "dealui" : "";
+        forcedArtifact = generation
+                ? finalChange ? "dealui" : "deal"
+                : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
-        if (generation) {
+        if (generation && finalChange) {
             // UI generation is a separate provider transaction. Its complete contract is the
             // freshly extracted AppInterface plus the component pack. Retaining DEAL tool calls
             // biases providers toward operation names that are no longer in the active surface.
