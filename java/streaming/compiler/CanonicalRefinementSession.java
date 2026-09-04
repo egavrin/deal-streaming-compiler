@@ -102,6 +102,7 @@ public final class CanonicalRefinementSession {
     private String dealUi;
     private CanonicalCompiler.Inspection inspection;
     private List<RepairScope> repairScopes = List.of();
+    private List<StructuredDiagnostic> repairDiagnostics = List.of();
     private String forcedArtifact = "";
     private final Map<String, SemanticId> aliases = new LinkedHashMap<>();
     private final Map<String, String> aliasesById = new LinkedHashMap<>();
@@ -294,8 +295,16 @@ public final class CanonicalRefinementSession {
         }
         context.put("previousToolResults", transcript);
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
+        if (!repairDiagnostics.isEmpty()) {
+            context.put("repairDirective", Map.of(
+                    "instruction", "Change the rejected operation. Never resubmit an identical operation.",
+                    "diagnostics", repairDiagnostics));
+        }
         if (!forcedArtifact.isEmpty()) context.put("requiredArtifact", forcedArtifact);
-        if (generation) context.put("generationStage", generationStage());
+        if (generation) {
+            context.put("generationStage", generationStage());
+            context.put("stageObjective", generationStageObjective());
+        }
         return CompilerProtocolJson.encode(context);
     }
 
@@ -352,6 +361,17 @@ public final class CanonicalRefinementSession {
         return "bootstrap";
     }
 
+    private String generationStageObjective() {
+        return switch (generationStage()) {
+            case "bootstrap" -> "Replace AppState and initialState together, then continue with final=false.";
+            case "app-state" -> "Replace only the missing AppState declaration; do not add or redeclare it.";
+            case "initial-state" -> "Replace only the missing initialState body; do not redeclare AppState.";
+            case "declarations" -> "AppState and initialState are committed. Add only new action, helper, and handler declarations with unique names.";
+            case "ui" -> "Build Deal UI only against the checked AppInterface and component pack.";
+            default -> throw new IllegalStateException("Unknown generation stage " + generationStage());
+        };
+    }
+
     private List<Map<String, Object>> dealOperationSchemas() {
         if (forcedArtifact.equals("dealui")) return List.of();
         List<Map<String, Object>> operations = new ArrayList<>();
@@ -361,7 +381,8 @@ public final class CanonicalRefinementSession {
                 case DealCompilerWorkspace.ADD_DECLARATION ->
                         Map.of("declaration", Map.of(
                                 "type", "string",
-                                "description", "Exactly one complete top-level class or function declaration"));
+                                "description", "Exactly one complete top-level class or function declaration with a unique name. Existing names: "
+                                        + existingDealSymbolNames()));
                 case DealCompilerWorkspace.REPLACE_DECLARATION ->
                         Map.of("declaration", Map.of(
                                 "type", "string",
@@ -524,6 +545,7 @@ public final class CanonicalRefinementSession {
             initialStateBootstrapReplaced |= replacesInitialState;
         }
         repairScopes = List.of();
+        repairDiagnostics = List.of();
         forcedArtifact = generation
                 ? finalChange ? "dealui" : "deal"
                 : result.impact().interfaceChanged() ? "dealui" : "";
@@ -580,6 +602,7 @@ public final class CanonicalRefinementSession {
         }
         dealUi = result.source();
         repairScopes = List.of();
+        repairDiagnostics = List.of();
         forcedArtifact = "";
         inspection = CanonicalCompiler.compileCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
@@ -607,6 +630,7 @@ public final class CanonicalRefinementSession {
             return;
         }
         repairScopes = diagnostics.stream().flatMap(value -> value.repairScopes().stream()).toList();
+        repairDiagnostics = List.copyOf(diagnostics);
         forcedArtifact = artifact;
     }
 
@@ -756,6 +780,13 @@ public final class CanonicalRefinementSession {
 
     private List<String> aliases(String prefix) {
         return aliases.keySet().stream().filter(value -> value.startsWith(prefix)).toList();
+    }
+
+    private String existingDealSymbolNames() {
+        return inspection.deal().symbols().stream()
+                .map(SymbolSnapshot::name)
+                .sorted()
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     private void addQueryTool(

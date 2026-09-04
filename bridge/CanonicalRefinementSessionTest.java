@@ -135,6 +135,8 @@ public final class CanonicalRefinementSessionTest {
                 "completed bootstrap bodies must not distract later greenfield rounds");
         check(stringField(input, "generationStage").equals("declarations"),
                 "the compact input must identify the declarations-only stage");
+        check(stringField(input, "stageObjective").contains("committed"),
+                "the compact input must state that bootstrap symbols are immutable");
         String declarationsWrite = session.acceptToolCallJson(
                 "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         check(declarationsWrite.contains("Bootstrap is committed"),
@@ -167,6 +169,8 @@ public final class CanonicalRefinementSessionTest {
                 "committed AppState must not remain queryable");
         check(toolNames(next).contains("query_deal_node"),
                 "the missing initialState body must remain queryable");
+        check(stringField(input, "stageObjective").contains("initialState"),
+                "partial bootstrap must identify the one missing unit");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
