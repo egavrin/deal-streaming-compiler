@@ -55,12 +55,14 @@ public final class CanonicalRefinementSession {
 
             DEAL is a mutable TypeScript-shaped subset. Use exported nominal classes, initialState,
             nominal actions ending in Action, and @ui-update handlers that return a complete new
-            AppState. Use typed let locals, semicolons, ===, !==, ordinary loops, array indexing and
-            array literals. Do not use const, var, interfaces, arrow functions, ternaries, switch,
-            postfix !, ++, compound assignment, JavaScript methods, map/filter/reduce or implicit
-            number/string conversion. Arrays have no push or concat methods. Append to a fresh
-            local array only with items[items.length] = value; build nested arrays by appending each
-            completed row the same way. State and action parameters are borrowed: construct a new
+            AppState. Classes are field-only nominal records: use fields with defaults, never
+            constructors or methods. Use typed let locals, semicolons, ===, !==, ordinary loops and
+            array indexing. Only the empty array literal [] is supported. Do not use non-empty array
+            literals, const, var, interfaces, arrow functions, ternaries, switch, postfix !, ++,
+            compound assignment, JavaScript methods, map/filter/reduce or implicit number/string
+            conversion. Arrays have no push or concat methods. Append to a fresh local array only
+            with items[items.length] = value; build nested arrays by appending each completed row the
+            same way. State and action parameters are borrowed: construct a new
             state and mutate only fresh local arrays or records. Keep visible strings English.
             Use int for integral values and defaults; a number default requires 0.0. Construct
             records with context-typed object literals such as {count: 0}; DEAL has no new operator.
