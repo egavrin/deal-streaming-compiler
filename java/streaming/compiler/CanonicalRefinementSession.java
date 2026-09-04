@@ -317,7 +317,7 @@ public final class CanonicalRefinementSession {
         if (!repairDiagnostics.isEmpty()) {
             context.put("repairDirective", Map.of(
                     "instruction", "Change the rejected operation. Never resubmit an identical operation.",
-                    "diagnostics", repairDiagnostics));
+                    "diagnostics", compactDiagnostics(repairDiagnostics)));
         }
         if (!forcedArtifact.isEmpty()) context.put("requiredArtifact", forcedArtifact);
         if (generation) {
@@ -361,11 +361,11 @@ public final class CanonicalRefinementSession {
                             "supportingDeclarations", Map.of(
                                     "type", "array",
                                     "items", Map.of("type", "string", "description",
-                                            "One complete unique field-only class declaration")),
+                                            "One complete unique field-only class declaration. Use int, not number, for integral fields and defaults")),
                             "appStateDeclaration", Map.of("type", "string", "description",
-                                    "Complete export class AppState declaration"),
+                                    "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
                             "initialStateBody", Map.of("type", "string", "description",
-                                    "Statements only; omit signature and outer braces")))));
+                                    "Statements only; omit signature and outer braces. Use int locals for integer literals and loops; only [] array literals")))));
         } else if (!dealOperations.isEmpty()) {
             String description = generation && generationStage().equals("declarations")
                     ? "Bootstrap is committed. Add only new top-level action, helper or handler declarations."
@@ -741,7 +741,7 @@ public final class CanonicalRefinementSession {
                 : ++dealUiSemanticRepairs;
         addTranscript(tool, Map.of(
                 "accepted", false,
-                "diagnostics", diagnostics,
+                "diagnostics", compactDiagnostics(diagnostics),
                 "attemptedOperations", attemptedOperations));
         if (artifactRepairs > maxSemanticRepairs) {
             status = Status.FAILED;
@@ -749,13 +749,32 @@ public final class CanonicalRefinementSession {
             dealUi = previousDealUi;
             return;
         }
-        repairScopes = diagnostics.stream().flatMap(value -> value.repairScopes().stream()).toList();
+        repairScopes = diagnostics.stream().flatMap(value -> value.repairScopes().stream()).distinct().toList();
         repairDiagnostics = List.copyOf(diagnostics);
         repairMustFinishDeal = generation
                 && generationStage().equals("declarations")
                 && !diagnostics.isEmpty()
                 && diagnostics.stream().allMatch(value -> value.code().equals("E2002"));
         forcedArtifact = artifact;
+    }
+
+    private static Map<String, Object> compactDiagnostics(List<StructuredDiagnostic> diagnostics) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        List<Map<String, Object>> examples = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+        for (StructuredDiagnostic diagnostic : diagnostics) {
+            counts.merge(diagnostic.code(), 1, Integer::sum);
+            String identity = diagnostic.code() + "\u0000" + diagnostic.message();
+            if (!seen.add(identity) || examples.size() >= 6) continue;
+            Map<String, Object> example = new LinkedHashMap<>();
+            example.put("code", diagnostic.code());
+            example.put("message", diagnostic.message());
+            if (!diagnostic.expected().isBlank()) example.put("expected", diagnostic.expected());
+            if (!diagnostic.actual().isBlank()) example.put("actual", diagnostic.actual());
+            if (diagnostic.range() != null) example.put("range", diagnostic.range());
+            examples.add(Map.copyOf(example));
+        }
+        return Map.of("counts", counts, "examples", examples);
     }
 
     private void unchanged() {
