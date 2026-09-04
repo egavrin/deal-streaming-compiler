@@ -42,6 +42,9 @@ public final class CanonicalRefinementSession {
             be batched. Set final=true only when behavior is complete. For a complex application,
             set final=false, inspect the new revision, and continue with another small transaction.
             Never return prose.
+            Obey generationStage. In bootstrap, replace AppState and initialState. In declarations,
+            those bootstrap units are committed and immutable: use only one addDeclaration operation
+            per new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
             Each declaration operation contains exactly one top-level class or function. Replace
             bootstrap AppState once, replace only the statements inside initialState, and add every
             other class or function with a separate addDeclaration operation in the same ChangeSet.
@@ -291,6 +294,7 @@ public final class CanonicalRefinementSession {
         context.put("previousToolResults", transcript);
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!forcedArtifact.isEmpty()) context.put("requiredArtifact", forcedArtifact);
+        if (generation) context.put("generationStage", generationStage());
         return CompilerProtocolJson.encode(context);
     }
 
@@ -311,7 +315,10 @@ public final class CanonicalRefinementSession {
         }
         List<Map<String, Object>> dealOperations = dealOperationSchemas();
         if (!dealOperations.isEmpty()) {
-            result.add(transactionTool("apply_deal_changes", "Apply one atomic DEAL ChangeSet.", dealOperations));
+            String description = generation && generationStage().equals("declarations")
+                    ? "Bootstrap is committed. Add only new top-level action, helper or handler declarations."
+                    : "Apply one atomic DEAL ChangeSet.";
+            result.add(transactionTool("apply_deal_changes", description, dealOperations));
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
         if (!uiOperations.isEmpty()) {
@@ -322,6 +329,13 @@ public final class CanonicalRefinementSession {
                     objectSchema(Map.of("reason", Map.of("type", "string")))));
         }
         return List.copyOf(result);
+    }
+
+    private String generationStage() {
+        if (forcedArtifact.equals("dealui")) return "ui";
+        return appStateBootstrapReplaced && initialStateBootstrapReplaced
+                ? "declarations"
+                : "bootstrap";
     }
 
     private List<Map<String, Object>> dealOperationSchemas() {

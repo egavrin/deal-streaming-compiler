@@ -132,6 +132,12 @@ public final class CanonicalRefinementSessionTest {
                 "completed bootstrap declarations must become read-only index entries");
         check(!toolNames(next).contains("query_deal_node"),
                 "completed bootstrap bodies must not distract later greenfield rounds");
+        check(stringField(input, "generationStage").equals("declarations"),
+                "the compact input must identify the declarations-only stage");
+        String declarationsWrite = session.acceptToolCallJson(
+                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        check(declarationsWrite.contains("Bootstrap is committed"),
+                "the write tool must explain its narrowed generation stage");
         check(!next.contains("\"operation\":{\"const\":\"replaceDeclaration\"}"),
                 "accepted AppState bootstrap must not be replaceable again");
         check(!next.contains("\"operation\":{\"const\":\"replaceFunctionBody\"}"),
