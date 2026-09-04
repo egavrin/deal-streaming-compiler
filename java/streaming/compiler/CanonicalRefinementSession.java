@@ -613,7 +613,7 @@ public final class CanonicalRefinementSession {
     }
 
     private void finishDeal() {
-        if (!generation || !generationStage().equals("declarations") || !inspection.valid()) {
+        if (!generation || !generationStage().equals("declarations") || !dealIsValid()) {
             throw new IllegalArgumentException("finish_deal requires valid generated DEAL after bootstrap");
         }
         forcedArtifact = "dealui";
@@ -622,6 +622,11 @@ public final class CanonicalRefinementSession {
         repairMustFinishDeal = false;
         transcript.clear();
         resetSurface();
+    }
+
+    private boolean dealIsValid() {
+        return inspection.deal().diagnostics().stream().noneMatch(diagnostic ->
+                diagnostic.severity().equalsIgnoreCase("error"));
     }
 
     private void applyDealUi(CanonicalJson.Obj arguments) {

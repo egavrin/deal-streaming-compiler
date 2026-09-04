@@ -257,7 +257,9 @@ public final class CanonicalRefinementSessionTest {
                         "body", "return {title: \"Ready\"};")), false));
         session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}")), false));
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}"),
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration",
+                        "// @ui-update\nexport function run(state: AppState, action: RunAction): AppState { return state; }")), false));
         session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}")), false));
