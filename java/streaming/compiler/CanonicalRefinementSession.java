@@ -96,6 +96,9 @@ public final class CanonicalRefinementSession {
             equality and When(condition) { ... } Else { ... } for visual branches. Bind all
             reachable input actions. Use semantic native components, one app-owned AppTheme, an
             adaptive Root, accessible labels, and Canvas/PointerSurface only for spatial content.
+            A view body produces exactly one root node. Use the shape
+            ui.AppTheme(...) { ui.Root(...) { ... } }; AppTheme wraps Root. Never emit AppTheme and
+            Root as siblings, and never leave AppTheme without its child block.
             Make the result polished and responsive without scenario-specific native components.
             The exact syntax is ui.Component(property: expression, spacing: ui.spaceMd) { ... }.
             Properties use colon, never equals. Qualify every component and token with ui. Bind an
