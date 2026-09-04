@@ -57,8 +57,12 @@ public final class CanonicalRefinementSessionTest {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Increment by two", 6, 2);
         requireTypedConstants(CompilerProtocolJson.decode(session.nextRequestJson()));
-        session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
+        String applyRequest = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
                 "targetId", body.id().value())));
+        List<String> applyTools = toolNames(applyRequest);
+        check(applyTools.contains("apply_deal_changes"), "query must advance to the DEAL apply phase");
+        check(!applyTools.contains("query_deal_symbol"), "loaded DEAL context must not be queried repeatedly");
+        check(!applyTools.contains("query_deal_node"), "loaded DEAL context must not be queried repeatedly");
         String repairRequest = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
                 "targetId", body.id().value(),
@@ -109,6 +113,15 @@ public final class CanonicalRefinementSessionTest {
     private static boolean booleanField(CanonicalJson.Obj object, String name) {
         CanonicalJson.Value value = CompilerProtocolJson.field(object, name);
         return value instanceof CanonicalJson.Bool flag && flag.value();
+    }
+
+    private static List<String> toolNames(String request) {
+        CanonicalJson.Arr tools = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(object(request), "tools"), "tools");
+        return tools.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "tool"))
+                .map(tool -> CompilerProtocolJson.stringField(tool, "name"))
+                .toList();
     }
 
     private static void requireTypedConstants(CanonicalJson.Value value) {

@@ -38,6 +38,8 @@ public final class CanonicalRefinementSession {
     private CanonicalCompiler.Inspection inspection;
     private List<RepairScope> repairScopes = List.of();
     private String forcedArtifact = "";
+    private boolean dealContextLoaded;
+    private boolean dealUiContextLoaded;
     private Status status = Status.REQUEST;
     private int rounds;
     private int semanticRepairs;
@@ -145,7 +147,7 @@ public final class CanonicalRefinementSession {
     private List<Map<String, Object>> tools() {
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
-        if (!repairing && !forcedArtifact.equals("dealui")) {
+        if (!repairing && !forcedArtifact.equals("dealui") && !dealContextLoaded) {
             result.add(tool("query_deal_symbol", "Read one DEAL declaration and dependency summary.",
                     objectSchema(Map.of("targetId", enumSchema(inspection.deal().symbols().stream()
                             .map(value -> value.id().value()).toList())))));
@@ -153,7 +155,7 @@ public final class CanonicalRefinementSession {
                     objectSchema(Map.of("targetId", enumSchema(inspection.deal().nodes().stream()
                             .map(value -> value.id().value()).toList())))));
         }
-        if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
+        if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null && !dealUiContextLoaded) {
             result.add(tool("query_deal_ui_node", "Read one Deal UI subtree and its bindings.",
                     objectSchema(Map.of("targetId", enumSchema(inspection.dealUi().nodes().stream()
                             .map(value -> value.id().value()).toList())))));
@@ -232,6 +234,8 @@ public final class CanonicalRefinementSession {
         addTranscript("query_deal_symbol", Map.of(
                 "symbol", symbol,
                 "source", sourceRange(deal, symbol.range())));
+        dealContextLoaded = true;
+        forcedArtifact = "deal";
     }
 
     private void queryDealNode(String id) {
@@ -241,6 +245,8 @@ public final class CanonicalRefinementSession {
         addTranscript("query_deal_node", Map.of(
                 "node", node,
                 "source", sourceRange(deal, node.range())));
+        dealContextLoaded = true;
+        forcedArtifact = "deal";
     }
 
     private void queryDealUiNode(String id) {
@@ -251,6 +257,8 @@ public final class CanonicalRefinementSession {
         addTranscript("query_deal_ui_node", Map.of(
                 "node", node,
                 "source", sourceRange(dealUi, node.range())));
+        dealUiContextLoaded = true;
+        forcedArtifact = "dealui";
     }
 
     private void applyDeal(CanonicalJson.Obj arguments) {
