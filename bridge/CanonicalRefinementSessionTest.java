@@ -48,6 +48,7 @@ public final class CanonicalRefinementSessionTest {
         uiOnlyChangeNeverTouchesDeal();
         uiDocumentQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
+        greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState();
         greenfieldFinalFalseKeepsBuildingDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
@@ -144,6 +145,28 @@ public final class CanonicalRefinementSessionTest {
                 "accepted initialState bootstrap must not be replaceable again");
         check(!toolNames(next).contains("query_deal_ui_view"),
                 "Deal UI must remain hidden until DEAL final=true");
+    }
+
+    private static void greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a complex app", 6, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        session.acceptToolCallJson("query_deal_symbol", CompilerProtocolJson.encode(Map.of(
+                "target", appState)));
+        String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { title: string = \"\"; count: int = 0; }")), false));
+        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
+        check(stringField(input, "generationStage").equals("initial-state"),
+                "partial bootstrap must name its missing unit");
+        check(!toolNames(next).contains("query_deal_module"),
+                "partial bootstrap must not unlock unrelated declarations");
+        check(!next.contains("\"enum\":[\"" + appState + "\"]"),
+                "committed AppState must not remain queryable");
+        check(toolNames(next).contains("query_deal_node"),
+                "the missing initialState body must remain queryable");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {

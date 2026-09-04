@@ -42,9 +42,10 @@ public final class CanonicalRefinementSession {
             be batched. Set final=true only when behavior is complete. For a complex application,
             set final=false, inspect the new revision, and continue with another small transaction.
             Never return prose.
-            Obey generationStage. In bootstrap, replace AppState and initialState. In declarations,
-            those bootstrap units are committed and immutable: use only one addDeclaration operation
-            per new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
+            Obey generationStage. In bootstrap, replace AppState and initialState. In app-state or
+            initial-state, complete only the named missing bootstrap unit. In declarations, both
+            bootstrap units are committed and immutable: use only one addDeclaration operation per
+            new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
             Each declaration operation contains exactly one top-level class or function. Replace
             bootstrap AppState once, replace only the statements inside initialState, and add every
             other class or function with a separate addDeclaration operation in the same ChangeSet.
@@ -302,10 +303,22 @@ public final class CanonicalRefinementSession {
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
         if (!repairing && !forcedArtifact.equals("dealui")) {
-            addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
-            if (!generation || !appStateBootstrapReplaced || !initialStateBootstrapReplaced) {
+            boolean bootstrapComplete = appStateBootstrapReplaced && initialStateBootstrapReplaced;
+            if (!generation || bootstrapComplete || !appStateBootstrapReplaced && !initialStateBootstrapReplaced) {
+                addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
+            }
+            if (!generation) {
                 addQueryTool(result, "query_deal_symbol", "Read one DEAL declaration and dependency summary.", "S");
                 addQueryTool(result, "query_deal_node", "Read one DEAL function or block body.", "B");
+            } else if (!bootstrapComplete) {
+                List<String> symbolTargets = new ArrayList<>();
+                if (!appStateBootstrapReplaced) symbolTargets.add(symbolAlias("AppState"));
+                if (!initialStateBootstrapReplaced) symbolTargets.add(symbolAlias("initialState"));
+                addQueryTool(result, "query_deal_symbol", "Read the missing bootstrap declaration.", symbolTargets);
+                if (!initialStateBootstrapReplaced) {
+                    addQueryTool(result, "query_deal_node", "Read the missing initialState body.",
+                            nodeAliases("initialState"));
+                }
             }
         }
         if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
@@ -333,9 +346,10 @@ public final class CanonicalRefinementSession {
 
     private String generationStage() {
         if (forcedArtifact.equals("dealui")) return "ui";
-        return appStateBootstrapReplaced && initialStateBootstrapReplaced
-                ? "declarations"
-                : "bootstrap";
+        if (appStateBootstrapReplaced && initialStateBootstrapReplaced) return "declarations";
+        if (appStateBootstrapReplaced) return "initial-state";
+        if (initialStateBootstrapReplaced) return "app-state";
+        return "bootstrap";
     }
 
     private List<Map<String, Object>> dealOperationSchemas() {
@@ -746,11 +760,34 @@ public final class CanonicalRefinementSession {
 
     private void addQueryTool(
             List<Map<String, Object>> tools, String name, String description, String prefix) {
-        List<String> values = aliases(prefix).stream()
+        addQueryTool(tools, name, description, aliases(prefix));
+    }
+
+    private void addQueryTool(
+            List<Map<String, Object>> tools, String name, String description, List<String> candidates) {
+        List<String> values = candidates.stream()
                 .filter(value -> !queriedAliases.contains(value)).toList();
         if (!values.isEmpty()) {
             tools.add(tool(name, description, objectSchema(Map.of("target", enumSchema(values)))));
         }
+    }
+
+    private String symbolAlias(String name) {
+        return inspection.deal().symbols().stream()
+                .filter(value -> value.name().equals(name))
+                .map(value -> alias(value.id()))
+                .findFirst().orElseThrow();
+    }
+
+    private List<String> nodeAliases(String ownerName) {
+        SemanticId owner = inspection.deal().symbols().stream()
+                .filter(value -> value.name().equals(ownerName))
+                .map(SymbolSnapshot::id)
+                .findFirst().orElseThrow();
+        return inspection.deal().nodes().stream()
+                .filter(value -> value.ownerId().equals(owner))
+                .map(value -> alias(value.id()))
+                .toList();
     }
 
     private Map<String, Object> compactDealIndex() {
