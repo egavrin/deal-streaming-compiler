@@ -79,6 +79,8 @@ public final class CanonicalRefinementSession {
             The exact syntax is ui.Component(property: expression, spacing: ui.spaceMd) { ... }.
             Properties use colon, never equals. Qualify every component and token with ui. Bind an
             action as onClick: action app.SomeAction { field: expression }, never SomeAction().
+            Runtime state values always start with the root parameter state, for example
+            state.score. The app alias qualifies action types only; never read app.someField.
             """.strip();
 
     private final String previousDeal;
@@ -101,6 +103,8 @@ public final class CanonicalRefinementSession {
     private Status status = Status.REQUEST;
     private int rounds;
     private int semanticRepairs;
+    private int dealSemanticRepairs;
+    private int dealUiSemanticRepairs;
     private final int maxRounds;
     private final int maxSemanticRepairs;
 
@@ -522,11 +526,14 @@ public final class CanonicalRefinementSession {
             String artifact,
             Object attemptedOperations) {
         semanticRepairs++;
+        int artifactRepairs = artifact.equals("deal")
+                ? ++dealSemanticRepairs
+                : ++dealUiSemanticRepairs;
         addTranscript(tool, Map.of(
                 "accepted", false,
                 "diagnostics", diagnostics,
                 "attemptedOperations", attemptedOperations));
-        if (semanticRepairs > maxSemanticRepairs) {
+        if (artifactRepairs > maxSemanticRepairs) {
             status = Status.FAILED;
             deal = previousDeal;
             dealUi = previousDealUi;
