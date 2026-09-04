@@ -41,6 +41,12 @@ public final class CanonicalRefinementSession {
             them with one cohesive application in one atomic transaction, then query and replace
             the Deal UI root view against the exact compiler-extracted interface. Emit exactly one
             write tool call per provider turn; read-only queries may be batched. Never return prose.
+            Each declaration operation contains exactly one top-level class or function. Replace
+            bootstrap AppState once, replace only the statements inside initialState, and add every
+            other class or function with a separate addDeclaration operation in the same ChangeSet.
+            Never put several declarations in one string and never replace a function declaration
+            and its body together. Example shape: replaceDeclaration(AppState),
+            replaceFunctionBody(initialState body), addDeclaration(Action), addDeclaration(handler).
 
             DEAL is a mutable TypeScript-shaped subset. Use exported nominal classes, initialState,
             nominal actions ending in Action, and @ui-update handlers that return a complete new
@@ -49,6 +55,8 @@ public final class CanonicalRefinementSession {
             postfix !, ++, compound assignment, JavaScript methods, map/filter/reduce or implicit
             number/string conversion. State and action parameters are borrowed: construct a new
             state and mutate only fresh local arrays or records. Keep visible strings English.
+            Use int for integral values and defaults; a number default requires 0.0. Construct
+            records with context-typed object literals such as {count: 0}; DEAL has no new operator.
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
             Use integer platform helpers only when listed by the host contract.
 
@@ -292,11 +300,16 @@ public final class CanonicalRefinementSession {
         if (forcedArtifact.equals("dealui")) return List.of();
         List<Map<String, Object>> operations = new ArrayList<>();
         dealGrants.values().forEach(grant -> {
+            if (generation && !allowedGreenfieldDealOperation(grant)) return;
             Map<String, Object> extra = switch (grant.operation()) {
                 case DealCompilerWorkspace.ADD_DECLARATION ->
-                        Map.of("declaration", Map.of("type", "string"));
+                        Map.of("declaration", Map.of(
+                                "type", "string",
+                                "description", "Exactly one complete top-level class or function declaration"));
                 case DealCompilerWorkspace.REPLACE_DECLARATION ->
-                        Map.of("declaration", Map.of("type", "string"));
+                        Map.of("declaration", Map.of(
+                                "type", "string",
+                                "description", "Exactly one declaration with the same name and kind as the target"));
                 case DealCompilerWorkspace.REPLACE_FUNCTION_BODY, DealCompilerWorkspace.REPLACE_BLOCK_BODY ->
                         Map.of("body", Map.of(
                                 "type", "string",
@@ -306,6 +319,24 @@ public final class CanonicalRefinementSession {
             addIfAllowed(operations, grant.operation(), grant.targetId(), extra);
         });
         return operations;
+    }
+
+    private boolean allowedGreenfieldDealOperation(OperationDescriptor grant) {
+        if (grant.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) return true;
+        if (grant.operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION)) {
+            return inspection.deal().symbols().stream().anyMatch(symbol ->
+                    symbol.id().equals(grant.targetId())
+                            && symbol.kind().equals("class")
+                            && symbol.name().equals("AppState"));
+        }
+        if (grant.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY)) {
+            return inspection.deal().nodes().stream().anyMatch(node ->
+                    node.id().equals(grant.targetId())
+                            && inspection.deal().symbols().stream().anyMatch(symbol ->
+                                    symbol.id().equals(node.ownerId())
+                                            && symbol.name().equals("initialState")));
+        }
+        return false;
     }
 
     private List<Map<String, Object>> dealUiOperationSchemas() {
