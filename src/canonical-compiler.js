@@ -101,6 +101,11 @@ export class CanonicalCompilerClient {
       ["deal", "dealUi", "pack", packSpecifier, targetId]);
   }
 
+  async queryDealUiDocument({ deal, source, pack, packSpecifier }) {
+    return this.#invoke("query-ui-document", { deal, dealUi: source, pack },
+      ["deal", "dealUi", "pack", packSpecifier]);
+  }
+
   async queryDealUiNode({ deal, source, pack, packSpecifier, targetId }) {
     return this.#invoke("query-ui-node", { deal, dealUi: source, pack },
       ["deal", "dealUi", "pack", packSpecifier, targetId]);

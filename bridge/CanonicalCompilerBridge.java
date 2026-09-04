@@ -30,6 +30,7 @@ public final class CanonicalCompilerBridge {
             case "apply-deal" -> applyDeal(args);
             case "apply-deal-checked" -> applyDealChecked(args);
             case "inspect-app", "compile-app" -> inspectApp(args);
+            case "query-ui-document" -> queryUiDocument(args);
             case "query-ui-view" -> queryUiView(args);
             case "query-ui-node" -> queryUiNode(args);
             case "apply-ui" -> applyUi(args);
@@ -90,6 +91,12 @@ public final class CanonicalCompilerBridge {
         requireArgs(args, 6);
         return CanonicalCompiler.queryDealUiView(
                 read(args[1]), read(args[2]), read(args[3]), args[4], new SemanticId(args[5]));
+    }
+
+    private static Object queryUiDocument(String[] args) throws Exception {
+        requireArgs(args, 5);
+        return CanonicalCompiler.queryDealUiDocument(
+                read(args[1]), read(args[2]), read(args[3]), args[4]);
     }
 
     private static Object queryUiNode(String[] args) throws Exception {
@@ -154,6 +161,9 @@ public final class CanonicalCompilerBridge {
             String name = CompilerProtocolJson.stringField(operation, "operation");
             SemanticId target = new SemanticId(CompilerProtocolJson.stringField(operation, "targetId"));
             result.add(switch (name) {
+                case UiCompilerWorkspace.ADD_VIEW -> new UiCompilerWorkspace.AddView(
+                        target, CompilerProtocolJson.stringField(operation, "source"));
+                case UiCompilerWorkspace.REMOVE_VIEW -> new UiCompilerWorkspace.RemoveView(target);
                 case UiCompilerWorkspace.REPLACE_VIEW_BODY -> new UiCompilerWorkspace.ReplaceViewBody(
                         target, CompilerProtocolJson.stringField(operation, "body"));
                 case UiCompilerWorkspace.REPLACE_SUBTREE -> new UiCompilerWorkspace.ReplaceSubtree(
