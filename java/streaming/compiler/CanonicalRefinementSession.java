@@ -41,6 +41,8 @@ public final class CanonicalRefinementSession {
     private boolean dealContextLoaded;
     private boolean dealUiContextLoaded;
     private final Set<String> dealContextIds = new LinkedHashSet<>();
+    private final Set<String> dealContextSymbolIds = new LinkedHashSet<>();
+    private final Set<String> dealContextNodeIds = new LinkedHashSet<>();
     private final Set<String> dealUiContextIds = new LinkedHashSet<>();
     private Status status = Status.REQUEST;
     private int rounds;
@@ -190,8 +192,9 @@ public final class CanonicalRefinementSession {
                 operations, DealCompilerWorkspace.REMOVE_DECLARATION, symbol.id(), Map.of()));
         inspection.deal().nodes().stream()
                 .filter(node -> !dealContextLoaded
-                        || dealContextIds.contains(node.id().value())
-                        || dealContextIds.contains(node.ownerId().value()))
+                        || dealContextNodeIds.contains(node.id().value())
+                        || (node.kind().equals("function-body")
+                                && dealContextSymbolIds.contains(node.ownerId().value())))
                 .forEach(node -> addIfAllowed(
                 operations,
                 node.kind().equals("function-body")
@@ -245,11 +248,16 @@ public final class CanonicalRefinementSession {
         var symbol = inspection.deal().symbols().stream()
                 .filter(value -> value.id().value().equals(id)).findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("Unknown DEAL symbol " + id));
+        var writableNodes = inspection.deal().nodes().stream()
+                .filter(node -> node.ownerId().equals(symbol.id()) && node.kind().equals("function-body"))
+                .toList();
         addTranscript("query_deal_symbol", Map.of(
                 "symbol", symbol,
+                "writableNodes", writableNodes,
                 "source", sourceRange(deal, symbol.range())));
         dealContextLoaded = true;
         dealContextIds.add(symbol.id().value());
+        dealContextSymbolIds.add(symbol.id().value());
         forcedArtifact = "deal";
     }
 
@@ -262,6 +270,7 @@ public final class CanonicalRefinementSession {
                 "source", sourceRange(deal, node.range())));
         dealContextLoaded = true;
         dealContextIds.add(node.id().value());
+        dealContextNodeIds.add(node.id().value());
         forcedArtifact = "deal";
     }
 
