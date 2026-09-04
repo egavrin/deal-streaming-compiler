@@ -69,16 +69,17 @@ public final class CanonicalRefinementSessionTest {
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
         session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
                 Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", initialState)))));
-        String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+        String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "replaceDeclaration", "target", appState,
                         "declaration", "export class AppState { count: int = 0; }"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {count: 0};")), false));
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "addDeclaration", "target", "M1",
                         "declaration", "export class IncrementAction {}"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {count: 0};"),
                 Map.of("operation", "addDeclaration", "target", "M1",
                         "declaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
                 true));
@@ -117,7 +118,6 @@ public final class CanonicalRefinementSessionTest {
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
         session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
                 Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
                 Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
         String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
@@ -183,7 +183,6 @@ public final class CanonicalRefinementSessionTest {
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
         session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
                 Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
                 Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
         String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(

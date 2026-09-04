@@ -111,6 +111,7 @@ public final class CanonicalRefinementSession {
     private final Set<String> queriedAliases = new LinkedHashSet<>();
     private Status status = Status.REQUEST;
     private int rounds;
+    private int writeRounds;
     private int semanticRepairs;
     private int dealSemanticRepairs;
     private int dealUiSemanticRepairs;
@@ -175,7 +176,7 @@ public final class CanonicalRefinementSession {
 
     public String nextRequestJson() {
         if (status != Status.REQUEST) return resultJson();
-        if (rounds >= maxRounds) {
+        if (writeRounds >= maxRounds) {
             fail("SC1001", "Refinement round budget exhausted");
             return resultJson();
         }
@@ -213,6 +214,7 @@ public final class CanonicalRefinementSession {
     public String acceptToolCallJson(String name, String argumentsJson) {
         if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
         rounds++;
+        if (!isReadOnlyQuery(name)) writeRounds++;
         CanonicalJson.Obj arguments = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(argumentsJson), "tool arguments");
         acceptToolCall(name, arguments);
@@ -232,6 +234,7 @@ public final class CanonicalRefinementSession {
             throw new IllegalArgumentException("A provider turn may batch only read-only compiler queries");
         }
         rounds++;
+        if (values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) writeRounds++;
         for (CanonicalJson.Obj value : values) {
             acceptToolCall(
                     string(value, "name"),
@@ -313,7 +316,7 @@ public final class CanonicalRefinementSession {
         boolean repairing = !repairScopes.isEmpty();
         if (!repairing && !forcedArtifact.equals("dealui")) {
             boolean bootstrapComplete = appStateBootstrapReplaced && initialStateBootstrapReplaced;
-            if (!generation || bootstrapComplete || !appStateBootstrapReplaced && !initialStateBootstrapReplaced) {
+            if (!generation || bootstrapComplete) {
                 addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
             }
             if (!generation) {
@@ -322,7 +325,6 @@ public final class CanonicalRefinementSession {
             } else if (!bootstrapComplete) {
                 List<String> symbolTargets = new ArrayList<>();
                 if (!appStateBootstrapReplaced) symbolTargets.add(symbolAlias("AppState"));
-                if (!initialStateBootstrapReplaced) symbolTargets.add(symbolAlias("initialState"));
                 addQueryTool(result, "query_deal_symbol", "Read the missing bootstrap declaration.", symbolTargets);
                 if (!initialStateBootstrapReplaced) {
                     addQueryTool(result, "query_deal_node", "Read the missing initialState body.",
