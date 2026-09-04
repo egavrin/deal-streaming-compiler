@@ -75,7 +75,9 @@ public final class CanonicalRefinementSession {
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
             Use integer platform helpers only when listed by the host contract.
             Every state/action-to-state handler must include // @ui-update immediately before its
-            export function declaration inside the same declaration string.
+            export function declaration inside the same declaration string. Such a handler has
+            exactly two parameters, (state: AppState, action: SomeAction). Never annotate a
+            one-parameter helper; helpers are ordinary unannotated functions.
             """.strip();
 
     private static final String DEAL_UI_GENERATION_SYSTEM_PROMPT = """
