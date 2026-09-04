@@ -52,6 +52,7 @@ public final class CanonicalRefinementSessionTest {
         greenfieldFinalFalseKeepsBuildingDeal();
         acceptedChangeSetResetsTheLocalRepairBudget();
         greenfieldNoOpBecomesScopedRepair();
+        duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -237,6 +238,33 @@ public final class CanonicalRefinementSessionTest {
         CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repair), "semanticRepairs");
         check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
                 "a no-op must consume the current ChangeSet repair budget");
+    }
+
+    private static void duplicateGreenfieldDeclarationsCanOnlyFinishDeal() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create an app", 8, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { title: string = \"Ready\"; }"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {title: \"Ready\"};")), false));
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}")), false));
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}")), false));
+        check(toolNames(repair).contains("finish_deal"),
+                "duplicate-only greenfield repair must allow completion");
+        check(!toolNames(repair).contains("apply_deal_changes"),
+                "duplicate-only greenfield repair must not allow another addDeclaration");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {

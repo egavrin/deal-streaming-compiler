@@ -121,6 +121,7 @@ public final class CanonicalRefinementSession {
     private int dealUiSemanticRepairs;
     private boolean appStateBootstrapReplaced;
     private boolean initialStateBootstrapReplaced;
+    private boolean repairMustFinishDeal;
     private final int maxRounds;
     private final int maxSemanticRepairs;
 
@@ -342,7 +343,7 @@ public final class CanonicalRefinementSession {
             addQueryTool(result, "query_deal_ui_view", "Read one complete Deal UI view.", "V");
             addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
         }
-        List<Map<String, Object>> dealOperations = dealOperationSchemas();
+        List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
         if (!dealOperations.isEmpty()) {
             String description = generation && generationStage().equals("declarations")
                     ? "Bootstrap is committed. Add only new top-level action, helper or handler declarations."
@@ -351,7 +352,9 @@ public final class CanonicalRefinementSession {
         }
         if (generation && generationStage().equals("declarations")) {
             result.add(tool("finish_deal",
-                    "Current checked DEAL behavior is complete. Transition to Deal UI without changing source.",
+                    repairMustFinishDeal
+                            ? "All rejected declarations already exist. Drop the duplicate ChangeSet and transition to Deal UI."
+                            : "Current checked DEAL behavior is complete. Transition to Deal UI without changing source.",
                     objectSchema(Map.of("reason", Map.of("type", "string")))));
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
@@ -576,6 +579,7 @@ public final class CanonicalRefinementSession {
             initialStateBootstrapReplaced |= replacesInitialState;
         }
         dealSemanticRepairs = 0;
+        repairMustFinishDeal = false;
         repairScopes = List.of();
         repairDiagnostics = List.of();
         forcedArtifact = generation
@@ -615,6 +619,7 @@ public final class CanonicalRefinementSession {
         forcedArtifact = "dealui";
         repairScopes = List.of();
         repairDiagnostics = List.of();
+        repairMustFinishDeal = false;
         transcript.clear();
         resetSurface();
     }
@@ -638,6 +643,7 @@ public final class CanonicalRefinementSession {
         }
         dealUi = result.source();
         dealUiSemanticRepairs = 0;
+        repairMustFinishDeal = false;
         repairScopes = List.of();
         repairDiagnostics = List.of();
         forcedArtifact = "";
@@ -668,6 +674,10 @@ public final class CanonicalRefinementSession {
         }
         repairScopes = diagnostics.stream().flatMap(value -> value.repairScopes().stream()).toList();
         repairDiagnostics = List.copyOf(diagnostics);
+        repairMustFinishDeal = generation
+                && generationStage().equals("declarations")
+                && !diagnostics.isEmpty()
+                && diagnostics.stream().allMatch(value -> value.code().equals("E2002"));
         forcedArtifact = artifact;
     }
 
