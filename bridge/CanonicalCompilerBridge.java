@@ -140,6 +140,9 @@ public final class CanonicalCompilerBridge {
                                 target, CompilerProtocolJson.stringField(operation, "declaration"));
                 case DealCompilerWorkspace.REMOVE_DECLARATION ->
                         new DealCompilerWorkspace.RemoveDeclaration(target);
+                case DealCompilerWorkspace.REPLACE_DECLARATION ->
+                        new DealCompilerWorkspace.ReplaceDeclaration(
+                                target, CompilerProtocolJson.stringField(operation, "declaration"));
                 case DealCompilerWorkspace.REPLACE_FUNCTION_BODY ->
                         new DealCompilerWorkspace.ReplaceFunctionBody(
                                 target, CompilerProtocolJson.stringField(operation, "body"));

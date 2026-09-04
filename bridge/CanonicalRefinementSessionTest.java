@@ -47,7 +47,54 @@ public final class CanonicalRefinementSessionTest {
         batchedQueriesConsumeOneProviderRound();
         uiOnlyChangeNeverTouchesDeal();
         uiDocumentQueryCanAddAView();
+        greenfieldBuildsDealBeforeDealUi();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void greenfieldBuildsDealBeforeDealUi() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a counter", 6, 2);
+        String initial = session.nextRequestJson();
+        check(stringField(CompilerProtocolJson.requireObject(
+                        CompilerProtocolJson.decode(stringField(object(initial), "input")), "input"),
+                        "requiredArtifact").equals("deal"),
+                "greenfield generation must start with DEAL");
+        check(!toolNames(initial).contains("query_deal_ui_view"),
+                "Deal UI must stay hidden until DEAL is accepted");
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", initialState)))));
+        String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { count: int = 0; }"),
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class IncrementAction {}"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {count: 0};"),
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
+                true));
+        CanonicalJson.Obj dealAcceptedInput = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(dealAccepted), "input")), "input");
+        check(stringField(dealAcceptedInput, "requiredArtifact").equals("dealui"),
+                "accepted greenfield DEAL must force the Deal UI stage: " + dealAccepted);
+        check(dealAcceptedInput.entries().stream().anyMatch(entry -> entry.key().equals("componentPack")),
+                "the UI stage must receive the compiler-owned component manifest");
+        String view = uiViewAlias(dealAccepted, "App");
+        String uiWrite = session.acceptToolCallJson(
+                "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
+        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(List.of(
+                Map.of("operation", "replaceViewBody", "target", view,
+                        "body", "ui.Column() { ui.Text(value: \"Counter\") ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) }")),
+                true));
+        CanonicalJson.Obj object = object(result);
+        check(booleanField(object, "accepted"), "greenfield canonical app must complete");
+        check(stringField(object, "deal").contains("IncrementAction"), "generated DEAL must be retained");
+        check(stringField(object, "dealUi").contains("ui.Button"), "generated Deal UI must be retained");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
@@ -156,7 +203,11 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
-        return CompilerProtocolJson.encode(Map.of("operations", List.of(operation), "final", finalChange));
+        return operationArguments(List.of(operation), finalChange);
+    }
+
+    private static String operationArguments(List<Map<String, Object>> operations, boolean finalChange) {
+        return CompilerProtocolJson.encode(Map.of("operations", operations, "final", finalChange));
     }
 
     private static String dealSymbolAlias(String request, String name) {
@@ -189,6 +240,17 @@ public final class CanonicalRefinementSessionTest {
         return nodes.items().stream()
                 .map(value -> CompilerProtocolJson.requireObject(value, "node"))
                 .filter(value -> stringField(value, "component").equals(component))
+                .map(value -> stringField(value, "target"))
+                .findFirst().orElseThrow();
+    }
+
+    private static String uiViewAlias(String request, String name) {
+        CanonicalJson.Obj dealUi = inputObject(request, "dealUi");
+        CanonicalJson.Arr views = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(dealUi, "views"), "views");
+        return views.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "view"))
+                .filter(value -> stringField(value, "name").equals(name))
                 .map(value -> stringField(value, "target"))
                 .findFirst().orElseThrow();
     }

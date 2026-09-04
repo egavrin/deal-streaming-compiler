@@ -25,7 +25,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String SYSTEM_PROMPT = """
+    private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
             target alias, then submit one small atomic transaction using only operations unlocked by
@@ -35,12 +35,38 @@ public final class CanonicalRefinementSession {
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             """.strip();
+    private static final String GENERATION_SYSTEM_PROMPT = """
+            Create one complete canonical DEAL application through the compact compiler surface.
+            Work sequentially: query the DEAL module and existing bootstrap declarations, replace
+            them with one cohesive application in one atomic transaction, then query and replace
+            the Deal UI root view against the exact compiler-extracted interface. Emit exactly one
+            write tool call per provider turn; read-only queries may be batched. Never return prose.
+
+            DEAL is a mutable TypeScript-shaped subset. Use exported nominal classes, initialState,
+            nominal actions ending in Action, and @ui-update handlers that return a complete new
+            AppState. Use typed let locals, semicolons, ===, !==, ordinary loops, array indexing and
+            array literals. Do not use const, var, interfaces, arrow functions, ternaries, switch,
+            postfix !, ++, compound assignment, JavaScript methods, map/filter/reduce or implicit
+            number/string conversion. State and action parameters are borrowed: construct a new
+            state and mutate only fresh local arrays or records. Keep visible strings English.
+            Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
+            Use integer platform helpers only when listed by the host contract.
+
+            Deal UI is declarative and read-only. Use only components and tokens in componentPack,
+            field paths from interface, action constructors, literals, When and ForEach. It has no
+            indexing, array/object literals, assignments, arbitrary calls, length, methods or
+            string-number coercion. Dynamic collections use ForEach with stable item keys. Bind all
+            reachable input actions. Use semantic native components, one app-owned AppTheme, an
+            adaptive Root, accessible labels, and Canvas/PointerSurface only for spatial content.
+            Make the result polished and responsive without scenario-specific native components.
+            """.strip();
 
     private final String previousDeal;
     private final String previousDealUi;
     private final String pack;
     private final String packSpecifier;
     private final String instruction;
+    private final boolean generation;
     private final List<Map<String, Object>> transcript = new ArrayList<>();
     private String deal;
     private String dealUi;
@@ -66,6 +92,30 @@ public final class CanonicalRefinementSession {
             String instruction,
             int maxRounds,
             int maxSemanticRepairs) {
+        this(deal, dealUi, pack, packSpecifier, instruction, maxRounds, maxSemanticRepairs, false);
+    }
+
+    public static CanonicalRefinementSession greenfield(
+            String pack,
+            String packSpecifier,
+            String instruction,
+            int maxRounds,
+            int maxSemanticRepairs) {
+        var bootstrap = CanonicalCompiler.bootstrapCanonicalApp(pack, packSpecifier);
+        return new CanonicalRefinementSession(
+                bootstrap.deal(), bootstrap.dealUi(), pack, packSpecifier, instruction,
+                maxRounds, maxSemanticRepairs, true);
+    }
+
+    private CanonicalRefinementSession(
+            String deal,
+            String dealUi,
+            String pack,
+            String packSpecifier,
+            String instruction,
+            int maxRounds,
+            int maxSemanticRepairs,
+            boolean generation) {
         if (instruction == null || instruction.isBlank()) {
             throw new IllegalArgumentException("Refinement instruction is empty");
         }
@@ -76,6 +126,7 @@ public final class CanonicalRefinementSession {
         this.pack = pack;
         this.packSpecifier = packSpecifier;
         this.instruction = instruction;
+        this.generation = generation;
         this.maxRounds = maxRounds;
         this.maxSemanticRepairs = maxSemanticRepairs;
         this.inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
@@ -84,6 +135,7 @@ public final class CanonicalRefinementSession {
                     "Cannot refine an invalid canonical application: " + inspection.diagnostics());
         }
         refreshAliases();
+        if (generation) forcedArtifact = "deal";
     }
 
     public String nextRequestJson() {
@@ -111,7 +163,7 @@ public final class CanonicalRefinementSession {
         request.put("revision", Map.of(
                 "deal", inspection.deal().sourceDigest(),
                 "dealUi", inspection.dealUi() == null ? "" : inspection.dealUi().sourceDigest()));
-        request.put("instructions", SYSTEM_PROMPT);
+        request.put("instructions", generation ? GENERATION_SYSTEM_PROMPT : REFINEMENT_SYSTEM_PROMPT);
         request.put("input", input);
         request.put("tools", tools);
         request.put("round", rounds + 1);
@@ -199,6 +251,9 @@ public final class CanonicalRefinementSession {
         }
         context.put("packVersion", inspection.packVersion());
         context.put("packDigest", inspection.packDigest());
+        if (generation && forcedArtifact.equals("dealui")) {
+            context.put("componentPack", compactComponentPack());
+        }
         context.put("previousToolResults", transcript);
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!forcedArtifact.isEmpty()) context.put("requiredArtifact", forcedArtifact);
@@ -239,6 +294,8 @@ public final class CanonicalRefinementSession {
         dealGrants.values().forEach(grant -> {
             Map<String, Object> extra = switch (grant.operation()) {
                 case DealCompilerWorkspace.ADD_DECLARATION ->
+                        Map.of("declaration", Map.of("type", "string"));
+                case DealCompilerWorkspace.REPLACE_DECLARATION ->
                         Map.of("declaration", Map.of("type", "string"));
                 case DealCompilerWorkspace.REPLACE_FUNCTION_BODY, DealCompilerWorkspace.REPLACE_BLOCK_BODY ->
                         Map.of("body", Map.of(
@@ -372,7 +429,7 @@ public final class CanonicalRefinementSession {
         }
         deal = result.source();
         repairScopes = List.of();
-        forcedArtifact = result.impact().interfaceChanged() ? "dealui" : "";
+        forcedArtifact = generation ? "dealui" : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
         addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
@@ -476,6 +533,8 @@ public final class CanonicalRefinementSession {
                 case DealCompilerWorkspace.ADD_DECLARATION -> new DealCompilerWorkspace.AddDeclaration(
                         target, string(operation, "declaration"));
                 case DealCompilerWorkspace.REMOVE_DECLARATION -> new DealCompilerWorkspace.RemoveDeclaration(target);
+                case DealCompilerWorkspace.REPLACE_DECLARATION -> new DealCompilerWorkspace.ReplaceDeclaration(
+                        target, string(operation, "declaration"));
                 case DealCompilerWorkspace.REPLACE_FUNCTION_BODY -> new DealCompilerWorkspace.ReplaceFunctionBody(
                         target, string(operation, "body"));
                 case DealCompilerWorkspace.REPLACE_BLOCK_BODY -> new DealCompilerWorkspace.ReplaceBlockBody(
@@ -637,6 +696,23 @@ public final class CanonicalRefinementSession {
                 "interfaceFingerprint", inspection.dealUi().appInterfaceFingerprint(),
                 "views", views,
                 "nodes", nodes);
+    }
+
+    private Map<String, Object> compactComponentPack() {
+        var snapshot = inspection.componentPack();
+        if (snapshot == null) return Map.of();
+        return Map.of(
+                "version", snapshot.version(),
+                "components", snapshot.components().stream().map(component -> Map.of(
+                        "name", component.name(),
+                        "props", component.properties().stream().map(property -> Map.of(
+                                "name", property.name(),
+                                "type", property.type(),
+                                "optional", property.optional())).toList(),
+                        "children", component.children(),
+                        "events", component.events(),
+                        "capabilities", component.capabilities())).toList(),
+                "tokens", snapshot.tokens());
     }
 
     private List<String> knownAliases(List<SemanticId> ids) {
