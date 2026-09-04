@@ -40,6 +40,8 @@ public final class CanonicalRefinementSession {
     private String forcedArtifact = "";
     private boolean dealContextLoaded;
     private boolean dealUiContextLoaded;
+    private final Set<String> dealContextIds = new LinkedHashSet<>();
+    private final Set<String> dealUiContextIds = new LinkedHashSet<>();
     private Status status = Status.REQUEST;
     private int rounds;
     private int semanticRepairs;
@@ -178,11 +180,19 @@ public final class CanonicalRefinementSession {
     private List<Map<String, Object>> dealOperationSchemas() {
         if (forcedArtifact.equals("dealui")) return List.of();
         List<Map<String, Object>> operations = new ArrayList<>();
-        addIfAllowed(operations, DealCompilerWorkspace.ADD_DECLARATION, inspection.deal().moduleId(),
-                Map.of("declaration", Map.of("type", "string")));
-        inspection.deal().symbols().forEach(symbol -> addIfAllowed(
+        if (!dealContextLoaded) {
+            addIfAllowed(operations, DealCompilerWorkspace.ADD_DECLARATION, inspection.deal().moduleId(),
+                    Map.of("declaration", Map.of("type", "string")));
+        }
+        inspection.deal().symbols().stream()
+                .filter(symbol -> !dealContextLoaded || dealContextIds.contains(symbol.id().value()))
+                .forEach(symbol -> addIfAllowed(
                 operations, DealCompilerWorkspace.REMOVE_DECLARATION, symbol.id(), Map.of()));
-        inspection.deal().nodes().forEach(node -> addIfAllowed(
+        inspection.deal().nodes().stream()
+                .filter(node -> !dealContextLoaded
+                        || dealContextIds.contains(node.id().value())
+                        || dealContextIds.contains(node.ownerId().value()))
+                .forEach(node -> addIfAllowed(
                 operations,
                 node.kind().equals("function-body")
                         ? DealCompilerWorkspace.REPLACE_FUNCTION_BODY
@@ -195,10 +205,14 @@ public final class CanonicalRefinementSession {
     private List<Map<String, Object>> dealUiOperationSchemas() {
         if (forcedArtifact.equals("deal") || inspection.dealUi() == null) return List.of();
         List<Map<String, Object>> operations = new ArrayList<>();
-        inspection.dealUi().views().forEach(view -> addIfAllowed(
+        inspection.dealUi().views().stream()
+                .filter(view -> !dealUiContextLoaded || dealUiContextIds.contains(view.id().value()))
+                .forEach(view -> addIfAllowed(
                 operations, UiCompilerWorkspace.REPLACE_VIEW_BODY, view.id(),
                 Map.of("body", Map.of("type", "string"))));
-        inspection.dealUi().nodes().forEach(node -> {
+        inspection.dealUi().nodes().stream()
+                .filter(node -> !dealUiContextLoaded || dealUiContextIds.contains(node.id().value()))
+                .forEach(node -> {
             addIfAllowed(operations, UiCompilerWorkspace.REPLACE_SUBTREE, node.id(),
                     Map.of("source", Map.of("type", "string")));
             addIfAllowed(operations, UiCompilerWorkspace.REMOVE_NODE, node.id(), Map.of());
@@ -235,6 +249,7 @@ public final class CanonicalRefinementSession {
                 "symbol", symbol,
                 "source", sourceRange(deal, symbol.range())));
         dealContextLoaded = true;
+        dealContextIds.add(symbol.id().value());
         forcedArtifact = "deal";
     }
 
@@ -246,6 +261,7 @@ public final class CanonicalRefinementSession {
                 "node", node,
                 "source", sourceRange(deal, node.range())));
         dealContextLoaded = true;
+        dealContextIds.add(node.id().value());
         forcedArtifact = "deal";
     }
 
@@ -258,6 +274,7 @@ public final class CanonicalRefinementSession {
                 "node", node,
                 "source", sourceRange(dealUi, node.range())));
         dealUiContextLoaded = true;
+        dealUiContextIds.add(node.id().value());
         forcedArtifact = "dealui";
     }
 
