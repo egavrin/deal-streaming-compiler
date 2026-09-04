@@ -263,6 +263,7 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_view" -> queryDealUiView(string(arguments, "target"));
             case "query_deal_ui_document" -> queryDealUiDocument(string(arguments, "target"));
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
+            case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
@@ -351,7 +352,19 @@ public final class CanonicalRefinementSession {
             addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
-        if (!dealOperations.isEmpty()) {
+        if (generation && generationStage().equals("bootstrap") && foundationReady()) {
+            result.add(tool("apply_deal_foundation",
+                    "Atomically declare supporting record types and replace the two bootstrap units.",
+                    objectSchema(Map.of(
+                            "supportingDeclarations", Map.of(
+                                    "type", "array",
+                                    "items", Map.of("type", "string", "description",
+                                            "One complete unique field-only class declaration")),
+                            "appStateDeclaration", Map.of("type", "string", "description",
+                                    "Complete export class AppState declaration"),
+                            "initialStateBody", Map.of("type", "string", "description",
+                                    "Statements only; omit signature and outer braces")))));
+        } else if (!dealOperations.isEmpty()) {
             String description = generation && generationStage().equals("declarations")
                     ? "Bootstrap is committed. Add only new top-level action, helper or handler declarations."
                     : "Apply one atomic DEAL ChangeSet.";
@@ -373,6 +386,26 @@ public final class CanonicalRefinementSession {
                     objectSchema(Map.of("reason", Map.of("type", "string")))));
         }
         return List.copyOf(result);
+    }
+
+    private boolean foundationReady() {
+        SemanticId module = inspection.deal().moduleId();
+        SemanticId appState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("AppState"))
+                .map(SymbolSnapshot::id).findFirst().orElse(null);
+        SemanticId initialBody = inspection.deal().nodes().stream()
+                .filter(node -> inspection.deal().symbols().stream().anyMatch(symbol ->
+                        symbol.id().equals(node.ownerId()) && symbol.name().equals("initialState")))
+                .map(node -> node.id()).findFirst().orElse(null);
+        return appState != null && initialBody != null
+                && hasGrant(DealCompilerWorkspace.ADD_DECLARATION, module)
+                && hasGrant(DealCompilerWorkspace.REPLACE_DECLARATION, appState)
+                && hasGrant(DealCompilerWorkspace.REPLACE_FUNCTION_BODY, initialBody);
+    }
+
+    private boolean hasGrant(String operation, SemanticId target) {
+        return dealGrants.values().stream().anyMatch(grant ->
+                grant.operation().equals(operation) && grant.targetId().equals(target));
     }
 
     private String generationStage() {
@@ -603,6 +636,36 @@ public final class CanonicalRefinementSession {
             addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
         }
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
+    }
+
+    private void applyDealFoundation(CanonicalJson.Obj arguments) {
+        List<Map<String, Object>> operations = new ArrayList<>();
+        CanonicalJson.Arr declarations = CompilerProtocolJson.requireArray(
+                field(arguments, "supportingDeclarations"), "supportingDeclarations");
+        String module = alias(inspection.deal().moduleId());
+        for (CanonicalJson.Value value : declarations.items()) {
+            if (!(value instanceof CanonicalJson.Str declaration)) {
+                throw new IllegalArgumentException("supportingDeclarations must contain strings");
+            }
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", declaration.value()));
+        }
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.REPLACE_DECLARATION,
+                "target", symbolAlias("AppState"),
+                "declaration", string(arguments, "appStateDeclaration")));
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                "target", nodeAliases("initialState").get(0),
+                "body", string(arguments, "initialStateBody")));
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", operations,
+                        "final", false))),
+                "foundation transaction");
+        applyDeal(transaction);
     }
 
     private boolean replacesAppStateBootstrap(DealCompilerWorkspace.Operation operation) {

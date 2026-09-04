@@ -72,17 +72,19 @@ public final class CanonicalRefinementSessionTest {
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+        String foundationRequest = session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
                 Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
                 Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)),
                 Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")))));
-        String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class Item { id: int = 0; label: string = \"\"; }"),
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { count: int = 0; items: Item[] = []; }"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {count: 0, items: []};")), false));
+        check(toolNames(foundationRequest).contains("apply_deal_foundation"),
+                "bootstrap must collapse rich ChangeSet operations into one compact agent handle");
+        check(!toolNames(foundationRequest).contains("apply_deal_changes"),
+                "bootstrap must not expose the generic operation union");
+        String declarations = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(
+                        "export class Item { id: int = 0; label: string = \"\"; }"),
+                "appStateDeclaration", "export class AppState { count: int = 0; items: Item[] = []; }",
+                "initialStateBody", "return {count: 0, items: []};")));
         session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "addDeclaration", "target", "M1",
