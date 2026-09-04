@@ -155,6 +155,7 @@ public final class CanonicalRefinementSession {
             case "query_deal_symbol" -> queryDealSymbol(string(arguments, "target"));
             case "query_deal_node" -> queryDealNode(string(arguments, "target"));
             case "query_deal_ui_view" -> queryDealUiView(string(arguments, "target"));
+            case "query_deal_ui_document" -> queryDealUiDocument(string(arguments, "target"));
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
             case "apply_deal_changes" -> applyDeal(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
@@ -167,6 +168,7 @@ public final class CanonicalRefinementSession {
         return name.equals("query_deal_module")
                 || name.equals("query_deal_symbol")
                 || name.equals("query_deal_node")
+                || name.equals("query_deal_ui_document")
                 || name.equals("query_deal_ui_view")
                 || name.equals("query_deal_ui_node");
     }
@@ -212,6 +214,7 @@ public final class CanonicalRefinementSession {
             addQueryTool(result, "query_deal_node", "Read one DEAL function or block body.", "B");
         }
         if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
+            addQueryTool(result, "query_deal_ui_document", "Unlock adding a new Deal UI view.", "D");
             addQueryTool(result, "query_deal_ui_view", "Read one complete Deal UI view.", "V");
             addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
         }
@@ -255,6 +258,7 @@ public final class CanonicalRefinementSession {
             UiCompilerWorkspace.UiNodeSnapshot node = inspection.dealUi().nodes().stream()
                     .filter(value -> value.id().equals(grant.targetId())).findFirst().orElse(null);
             Map<String, Object> extra = switch (grant.operation()) {
+                case UiCompilerWorkspace.ADD_VIEW -> Map.of("source", Map.of("type", "string"));
                 case UiCompilerWorkspace.REPLACE_VIEW_BODY -> Map.of("body", Map.of("type", "string"));
                 case UiCompilerWorkspace.REPLACE_SUBTREE -> Map.of("source", Map.of("type", "string"));
                 case UiCompilerWorkspace.INSERT_CHILD -> Map.of(
@@ -326,6 +330,17 @@ public final class CanonicalRefinementSession {
         grant(dealUiGrants, slice.allowedOperations());
         queriedAliases.add(target);
         addTranscript("query_deal_ui_view", compactUiSlice(slice));
+        forcedArtifact = "dealui";
+    }
+
+    private void queryDealUiDocument(String target) {
+        if (inspection.dealUi() == null) throw new IllegalStateException("Deal UI inspection is unavailable");
+        SemanticId id = resolveAlias(target, "D");
+        var slice = CanonicalCompiler.queryDealUiDocument(deal, dealUi, pack, packSpecifier);
+        requireSameTarget(id, slice.ownerId());
+        grant(dealUiGrants, slice.allowedOperations());
+        queriedAliases.add(target);
+        addTranscript("query_deal_ui_document", compactUiSlice(slice));
         forcedArtifact = "dealui";
     }
 
@@ -478,6 +493,9 @@ public final class CanonicalRefinementSession {
             String name = string(operation, "operation");
             SemanticId target = resolveAlias(string(operation, "target"), null);
             result.add(switch (name) {
+                case UiCompilerWorkspace.ADD_VIEW -> new UiCompilerWorkspace.AddView(
+                        target, string(operation, "source"));
+                case UiCompilerWorkspace.REMOVE_VIEW -> new UiCompilerWorkspace.RemoveView(target);
                 case UiCompilerWorkspace.REPLACE_VIEW_BODY -> new UiCompilerWorkspace.ReplaceViewBody(
                         target, string(operation, "body"));
                 case UiCompilerWorkspace.REPLACE_SUBTREE -> new UiCompilerWorkspace.ReplaceSubtree(
@@ -512,6 +530,7 @@ public final class CanonicalRefinementSession {
             putAlias("B" + index++, node.id());
         }
         if (inspection.dealUi() == null) return;
+        putAlias("D1", inspection.dealUi().documentId());
         index = 1;
         for (var view : inspection.dealUi().views().stream()
                 .sorted(Comparator.comparing(UiCompilerWorkspace.UiViewSnapshot::name)).toList()) {

@@ -46,6 +46,7 @@ public final class CanonicalRefinementSessionTest {
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
         uiOnlyChangeNeverTouchesDeal();
+        uiDocumentQueryCanAddAView();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -98,6 +99,27 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
+    }
+
+    private static void uiDocumentQueryCanAddAView() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add a reusable detail view", 4, 1);
+        String initial = session.nextRequestJson();
+        check(toolNames(initial).contains("query_deal_ui_document"),
+                "the compact surface must expose compiler-owned document inspection");
+        String applyRequest = session.acceptToolCallJson(
+                "query_deal_ui_document", CompilerProtocolJson.encode(Map.of("target", "D1")));
+        check(toolNames(applyRequest).contains("apply_deal_ui_changes"),
+                "document query must unlock the checked UI transaction");
+        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
+                "operation", "addView",
+                "target", "D1",
+                "source", "export view Detail(state: app.AppState): View { ui.Text(value: state.title) }"), true));
+        CanonicalJson.Obj object = object(result);
+        check(booleanField(object, "accepted"), "a checked non-root view must be added");
+        check(stringField(object, "dealUi").contains("export view Detail"),
+                "the accepted canonical UI source must contain the added view");
+        check(stringField(object, "deal").equals(DEAL), "adding a UI view must not touch DEAL");
     }
 
     private static void unqueriedAliasCannotBeWritten() {

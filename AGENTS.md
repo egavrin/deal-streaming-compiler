@@ -31,6 +31,9 @@ minimum summaries and only the operations relevant to the current step. A model 
 before a write operation for that target appears. The engine resolves aliases to compiler-issued
 `SymbolId` and revision-scoped `NodeId` internally and supplies the compiler-issued target fingerprint
 as a transaction precondition. Aliases expire whenever either canonical source changes.
+Structural Deal UI work queries a compiler-owned document alias before `addView`; view removal and
+subtree edits likewise require their current queried aliases. The model never invents or persists
+document, view or node identities.
 
 Model tools never use source comments, text search or offsets as identity. Stale digests, aliases and
 fingerprints are rejected before a candidate changes. A semantic transaction is copy, validate,
