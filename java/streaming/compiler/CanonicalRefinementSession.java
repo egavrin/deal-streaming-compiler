@@ -107,6 +107,8 @@ public final class CanonicalRefinementSession {
     private int semanticRepairs;
     private int dealSemanticRepairs;
     private int dealUiSemanticRepairs;
+    private boolean appStateBootstrapReplaced;
+    private boolean initialStateBootstrapReplaced;
     private final int maxRounds;
     private final int maxSemanticRepairs;
 
@@ -346,13 +348,13 @@ public final class CanonicalRefinementSession {
     private boolean allowedGreenfieldDealOperation(OperationDescriptor grant) {
         if (grant.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) return true;
         if (grant.operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION)) {
-            return inspection.deal().symbols().stream().anyMatch(symbol ->
+            return !appStateBootstrapReplaced && inspection.deal().symbols().stream().anyMatch(symbol ->
                     symbol.id().equals(grant.targetId())
                             && symbol.kind().equals("class")
                             && symbol.name().equals("AppState"));
         }
         if (grant.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY)) {
-            return inspection.deal().nodes().stream().anyMatch(node ->
+            return !initialStateBootstrapReplaced && inspection.deal().nodes().stream().anyMatch(node ->
                     node.id().equals(grant.targetId())
                             && inspection.deal().symbols().stream().anyMatch(symbol ->
                                     symbol.id().equals(node.ownerId())
@@ -467,6 +469,9 @@ public final class CanonicalRefinementSession {
     private void applyDeal(CanonicalJson.Obj arguments) {
         List<DealCompilerWorkspace.Operation> operations = dealOperations(field(arguments, "operations"));
         boolean finalChange = booleanField(arguments, "final");
+        String beforeDigest = inspection.deal().sourceDigest();
+        boolean replacesAppState = generation && operations.stream().anyMatch(this::replacesAppStateBootstrap);
+        boolean replacesInitialState = generation && operations.stream().anyMatch(this::replacesInitialStateBootstrap);
         var result = CanonicalCompiler.applyDealChangeChecked(
                 deal,
                 new ChangeSetPrecondition(inspection.deal().sourceDigest(), fingerprints(dealGrants)),
@@ -481,12 +486,24 @@ public final class CanonicalRefinementSession {
             return;
         }
         deal = result.source();
+        boolean sourceChanged = !result.sourceDigest().equals(beforeDigest);
+        if (sourceChanged) {
+            appStateBootstrapReplaced |= replacesAppState;
+            initialStateBootstrapReplaced |= replacesInitialState;
+        }
         repairScopes = List.of();
         forcedArtifact = generation
                 ? finalChange ? "dealui" : "deal"
                 : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
+        if (generation && !sourceChanged && !finalChange) {
+            addTranscript("apply_deal_changes", Map.of(
+                    "accepted", false,
+                    "code", "SC1002",
+                    "message", "final=false transaction made no source progress; add missing declarations or finish DEAL"));
+            return;
+        }
         if (generation && finalChange) {
             // UI generation is a separate provider transaction. Its complete contract is the
             // freshly extracted AppInterface plus the component pack. Retaining DEAL tool calls
@@ -496,6 +513,20 @@ public final class CanonicalRefinementSession {
             addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
         }
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
+    }
+
+    private boolean replacesAppStateBootstrap(DealCompilerWorkspace.Operation operation) {
+        if (!(operation instanceof DealCompilerWorkspace.ReplaceDeclaration replace)) return false;
+        return inspection.deal().symbols().stream().anyMatch(symbol ->
+                symbol.id().equals(replace.targetId()) && symbol.name().equals("AppState"));
+    }
+
+    private boolean replacesInitialStateBootstrap(DealCompilerWorkspace.Operation operation) {
+        if (!(operation instanceof DealCompilerWorkspace.ReplaceFunctionBody replace)) return false;
+        return inspection.deal().nodes().stream().anyMatch(node ->
+                node.id().equals(replace.targetId())
+                        && inspection.deal().symbols().stream().anyMatch(symbol ->
+                                symbol.id().equals(node.ownerId()) && symbol.name().equals("initialState")));
     }
 
     private void applyDealUi(CanonicalJson.Obj arguments) {

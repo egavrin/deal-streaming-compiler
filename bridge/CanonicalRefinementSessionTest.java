@@ -128,6 +128,10 @@ public final class CanonicalRefinementSessionTest {
                 "final=false must keep complex greenfield generation in DEAL");
         check(toolNames(next).contains("query_deal_module"),
                 "the next DEAL revision must expose a fresh compiler surface");
+        check(!next.contains("\"operation\":{\"const\":\"replaceDeclaration\"}"),
+                "accepted AppState bootstrap must not be replaceable again");
+        check(!next.contains("\"operation\":{\"const\":\"replaceFunctionBody\"}"),
+                "accepted initialState bootstrap must not be replaceable again");
         check(!toolNames(next).contains("query_deal_ui_view"),
                 "Deal UI must remain hidden until DEAL final=true");
     }
