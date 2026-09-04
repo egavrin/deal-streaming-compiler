@@ -100,6 +100,7 @@ public final class CanonicalRefinementSession {
         request.put("status", "request");
         request.put("protocolVersion", CompilerProtocol.VERSION);
         request.put("surfaceVersion", CompilerProtocol.AGENT_SURFACE_VERSION);
+        request.put("protocolMode", "v2-with-v1-shadow");
         request.put("surfaceDigest", surfaceDigest);
         int inputBytes = input.getBytes(StandardCharsets.UTF_8).length;
         int toolBytes = encodedTools.getBytes(StandardCharsets.UTF_8).length;
@@ -179,6 +180,9 @@ public final class CanonicalRefinementSession {
         result.put("dealUi", status == Status.COMPLETE ? dealUi : previousDealUi);
         result.put("rounds", rounds);
         result.put("semanticRepairs", semanticRepairs);
+        result.put("protocolVersion", CompilerProtocol.VERSION);
+        result.put("surfaceVersion", CompilerProtocol.AGENT_SURFACE_VERSION);
+        result.put("protocolMode", "v2-with-v1-shadow");
         result.put("inspection", inspection);
         result.put("transcript", transcript);
         return CompilerProtocolJson.encode(result);
@@ -342,6 +346,11 @@ public final class CanonicalRefinementSession {
                 deal,
                 new ChangeSetPrecondition(inspection.deal().sourceDigest(), fingerprints(dealGrants)),
                 operations);
+        if (!isPreconditionRejection(result.diagnostics())) {
+            var shadow = CanonicalCompiler.applyDealChange(
+                    deal, inspection.deal().sourceDigest(), operations);
+            recordShadowParity("deal", shadow.accepted(), shadow.sourceDigest(), result.accepted(), result.sourceDigest());
+        }
         if (!result.accepted()) {
             reject("apply_deal_changes", result.diagnostics(), "deal", operations);
             return;
@@ -363,6 +372,11 @@ public final class CanonicalRefinementSession {
                 deal, dealUi, pack, packSpecifier,
                 new ChangeSetPrecondition(inspection.dealUi().sourceDigest(), fingerprints(dealUiGrants)),
                 operations);
+        if (!isPreconditionRejection(result.diagnostics())) {
+            var shadow = CanonicalCompiler.applyDealUiChange(
+                    deal, dealUi, pack, packSpecifier, inspection.dealUi().sourceDigest(), operations);
+            recordShadowParity("dealui", shadow.accepted(), shadow.sourceDigest(), result.accepted(), result.sourceDigest());
+        }
         if (!result.accepted()) {
             reject("apply_deal_ui_changes", result.diagnostics(), "dealui", operations);
             return;
@@ -412,6 +426,29 @@ public final class CanonicalRefinementSession {
 
     private void addTranscript(String tool, Map<String, Object> value) {
         transcript.add(Map.of("tool", tool, "result", value));
+    }
+
+    private void recordShadowParity(
+            String artifact,
+            boolean shadowAccepted,
+            String shadowDigest,
+            boolean checkedAccepted,
+            String checkedDigest) {
+        boolean equal = shadowAccepted == checkedAccepted && shadowDigest.equals(checkedDigest);
+        addTranscript("protocol_shadow", Map.of(
+                "artifact", artifact,
+                "v1Accepted", shadowAccepted,
+                "v2Accepted", checkedAccepted,
+                "sourceDigestEqual", shadowDigest.equals(checkedDigest),
+                "equal", equal));
+        if (!equal) throw new IllegalStateException("Compiler protocol v1/v2 shadow mismatch for " + artifact);
+    }
+
+    private static boolean isPreconditionRejection(List<StructuredDiagnostic> diagnostics) {
+        return diagnostics.stream().anyMatch(value ->
+                value.code().equals("CP1001")
+                        || value.code().equals("CP1010")
+                        || value.code().equals("CP1011"));
     }
 
     private List<DealCompilerWorkspace.Operation> dealOperations(CanonicalJson.Value value) {

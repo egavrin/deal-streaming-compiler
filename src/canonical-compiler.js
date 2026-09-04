@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { run } from "./process.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+let compilerClientSequence = 0;
 
 /** Stateless process client for the real DEAL + Deal UI transpiler entity. */
 export class CanonicalCompilerClient {
@@ -15,7 +16,11 @@ export class CanonicalCompilerClient {
   } = {}) {
     this.dealRepo = resolve(dealRepo ?? join(ROOT, "..", "deal-reference"));
     this.dealUiRepo = resolve(dealUiRepo ?? join(ROOT, "..", "deal-ui-reference"));
-    this.classes = join(ROOT, ".cache", "canonical-compiler");
+    this.classes = join(
+      ROOT,
+      ".cache",
+      `canonical-compiler-${process.pid}-${++compilerClientSequence}`,
+    );
   }
 
   async setup() {
