@@ -88,6 +88,8 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI surface must not retain DEAL transaction history: " + dealAccepted);
         check(!dealAccepted.contains("replaceDeclaration"),
                 "Deal UI surface must not expose DEAL operation schemas: " + dealAccepted);
+        check(dealAccepted.contains("Properties use colon, never equals"),
+                "Deal UI surface must state its compact call syntax: " + dealAccepted);
         String view = uiViewAlias(dealAccepted, "App");
         String uiWrite = session.acceptToolCallJson(
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));

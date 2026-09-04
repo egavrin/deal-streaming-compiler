@@ -64,7 +64,9 @@ public final class CanonicalRefinementSession {
             Create the complete Deal UI presentation for the supplied compiler-extracted
             AppInterface. Query the bootstrap root view, then replace its body in one atomic UI
             transaction and mark it final. Emit exactly one write tool call; read-only queries may
-            be batched. Use only operations in the current tool schema. Never return prose.
+            be batched. The replacement body contains only statements inside the existing view:
+            omit the view signature and outer braces. Use only operations in the current tool
+            schema. Never return prose.
             Deal UI is declarative and read-only. Use only components and tokens in componentPack,
             field paths from interface, action constructors, literals, When and ForEach. It has no
             indexing, array/object literals, assignments, arbitrary calls, length, methods or
@@ -72,6 +74,9 @@ public final class CanonicalRefinementSession {
             reachable input actions. Use semantic native components, one app-owned AppTheme, an
             adaptive Root, accessible labels, and Canvas/PointerSurface only for spatial content.
             Make the result polished and responsive without scenario-specific native components.
+            The exact syntax is ui.Component(property: expression, spacing: ui.spaceMd) { ... }.
+            Properties use colon, never equals. Qualify every component and token with ui. Bind an
+            action as onClick: action app.SomeAction { field: expression }, never SomeAction().
             """.strip();
 
     private final String previousDeal;
