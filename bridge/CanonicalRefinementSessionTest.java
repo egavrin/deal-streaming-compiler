@@ -45,6 +45,7 @@ public final class CanonicalRefinementSessionTest {
         rejectedDealBodyNarrowsRepairAndRollsForward();
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
+        writePhaseHidesAllQueryTools();
         uiOnlyChangeNeverTouchesDeal();
         uiDocumentQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -413,6 +414,18 @@ public final class CanonicalRefinementSessionTest {
                 "one batched provider turn must advance the round exactly once");
         check(toolNames(request).contains("apply_deal_ui_changes"),
                 "batched UI context must expose the targeted write transaction");
+    }
+
+    private static void writePhaseHidesAllQueryTools() {
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Polish the interface", 2, 1);
+        String initial = session.nextRequestJson();
+        String target = uiNodeAliases(initial).get(0);
+        String request = session.acceptToolCallJson("query_deal_ui_node", CompilerProtocolJson.encode(Map.of(
+                "target", target)));
+        check(toolNames(request).contains("apply_deal_ui_changes"),
+                "a successful inspection must unlock the UI transaction");
+        check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
+                "the edit phase must hide every query tool so reads cannot be nested in a ChangeSet");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {

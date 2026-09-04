@@ -31,7 +31,10 @@ public final class CanonicalRefinementSession {
             target alias, then submit one small atomic transaction using only operations unlocked by
             that query. Never regenerate an unrelated unit. Compiler diagnostics and writable repair
             scopes are authoritative. Use no scenario templates. Set final to false only when another
-            behavior or visual transaction is required. Emit exactly one tool call.
+            behavior or visual transaction is required. The surface has distinct inspect and edit
+            phases. In the inspect phase call query tools directly and batch every required query in
+            that provider turn. In the edit phase call the single write tool directly; never put a
+            query operation inside a ChangeSet. Emit exactly one write tool call.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             """.strip();
@@ -333,7 +336,8 @@ public final class CanonicalRefinementSession {
     private List<Map<String, Object>> tools() {
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
-        if (!repairing && !forcedArtifact.equals("dealui")) {
+        boolean writeUnlocked = !dealGrants.isEmpty() || !dealUiGrants.isEmpty();
+        if (!repairing && !writeUnlocked && !forcedArtifact.equals("dealui")) {
             boolean bootstrapComplete = appStateBootstrapReplaced && initialStateBootstrapReplaced;
             if (!generation || bootstrapComplete || generationStage().equals("bootstrap")) {
                 addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
@@ -351,7 +355,7 @@ public final class CanonicalRefinementSession {
                 }
             }
         }
-        if (!repairing && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
+        if (!repairing && !writeUnlocked && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
             addQueryTool(result, "query_deal_ui_document", "Unlock adding a new Deal UI view.", "D");
             addQueryTool(result, "query_deal_ui_view", "Read one complete Deal UI view.", "V");
             addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
