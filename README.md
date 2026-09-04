@@ -1,8 +1,28 @@
 # Streaming Compiler
 
-Streaming Compiler — model-agnostic prototype семантической генерации DEAL v1.2. Он сравнивает
-прямую генерацию source с потоковой сборкой partial typed HIR через compiler-provided choices,
-немедленно применяет допустимые choices и запускает один production compiler/runtime oracle.
+Streaming Compiler is the provider-neutral generation engine for DEAL and Deal UI. The DEAL and
+Deal UI repositories are transpilers: they own syntax, semantic graphs, diagnostics and atomic source
+edits. This repository owns the LLM loop and exposes a compact Agent Surface derived from those rich
+compiler APIs.
+
+The production architecture is:
+
+```text
+user request
+  -> compact Agent Surface v2
+  -> model query/edit tools
+  -> stateless DEAL / Deal UI Compiler Protocol v2
+  -> checked app.deal + app.dealui
+```
+
+The model sees short revision-local aliases such as `S3`, `B7`, `V1` and `U12`, not full semantic
+graphs or opaque compiler ids. A query returns only one compiler-owned semantic slice and unlocks
+only the write operations for that slice. Every write carries the source digest and target
+fingerprints captured by the engine. Failed transactions preserve the canonical sources byte for
+byte; transport retries do not spend semantic repair budget.
+
+Greenfield generation and modernization must converge on this same protocol. The older direct-vs-HIR
+benchmark remains an experiment and is not the product architecture.
 
 Запускаемый прототип сравнивает две стратегии на одних задачах и через один production compiler/runtime oracle:
 

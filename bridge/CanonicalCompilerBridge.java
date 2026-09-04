@@ -1,5 +1,6 @@
 package prototype;
 
+import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocolJson;
 import deal.compiler.DealCompilerWorkspace;
@@ -10,7 +11,9 @@ import deal.ui.UiCompilerWorkspace;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /** Process adapter for the platform-neutral transpiler API. */
 public final class CanonicalCompilerBridge {
@@ -19,10 +22,18 @@ public final class CanonicalCompilerBridge {
     public static void main(String[] args) throws Exception {
         if (args.length == 0) throw new IllegalArgumentException("Missing compiler command");
         Object response = switch (args[0]) {
+            case "handshake" -> CanonicalCompiler.handshake();
             case "inspect-deal" -> inspectDeal(args);
+            case "query-deal-module" -> queryDealModule(args);
+            case "query-deal-symbol" -> queryDealSymbol(args);
+            case "query-deal-node" -> queryDealNode(args);
             case "apply-deal" -> applyDeal(args);
+            case "apply-deal-checked" -> applyDealChecked(args);
             case "inspect-app", "compile-app" -> inspectApp(args);
+            case "query-ui-view" -> queryUiView(args);
+            case "query-ui-node" -> queryUiNode(args);
             case "apply-ui" -> applyUi(args);
+            case "apply-ui-checked" -> applyUiChecked(args);
             default -> throw new IllegalArgumentException("Unknown compiler command: " + args[0]);
         };
         System.out.print(CompilerProtocolJson.encode(response));
@@ -40,6 +51,29 @@ public final class CanonicalCompilerBridge {
                 read(args[1]), args[2], dealOperations(read(args[3])));
     }
 
+    private static Object queryDealModule(String[] args) throws Exception {
+        requireArgs(args, 2);
+        return CanonicalCompiler.queryDealModule(read(args[1]));
+    }
+
+    private static Object queryDealSymbol(String[] args) throws Exception {
+        requireArgs(args, 3);
+        return CanonicalCompiler.queryDealSymbol(read(args[1]), new SemanticId(args[2]));
+    }
+
+    private static Object queryDealNode(String[] args) throws Exception {
+        requireArgs(args, 3);
+        return CanonicalCompiler.queryDealNode(read(args[1]), new SemanticId(args[2]));
+    }
+
+    private static Object applyDealChecked(String[] args) throws Exception {
+        requireArgs(args, 5);
+        return CanonicalCompiler.applyDealChangeChecked(
+                read(args[1]),
+                new ChangeSetPrecondition(args[2], stringMap(read(args[3]))),
+                dealOperations(read(args[4])));
+    }
+
     private static Object inspectApp(String[] args) throws Exception {
         requireArgs(args, 5);
         return CanonicalCompiler.compileCanonicalApp(
@@ -50,6 +84,39 @@ public final class CanonicalCompilerBridge {
         requireArgs(args, 7);
         return CanonicalCompiler.applyDealUiChange(
                 read(args[1]), read(args[2]), read(args[3]), args[4], args[5], uiOperations(read(args[6])));
+    }
+
+    private static Object queryUiView(String[] args) throws Exception {
+        requireArgs(args, 6);
+        return CanonicalCompiler.queryDealUiView(
+                read(args[1]), read(args[2]), read(args[3]), args[4], new SemanticId(args[5]));
+    }
+
+    private static Object queryUiNode(String[] args) throws Exception {
+        requireArgs(args, 6);
+        return CanonicalCompiler.queryDealUiNode(
+                read(args[1]), read(args[2]), read(args[3]), args[4], new SemanticId(args[5]));
+    }
+
+    private static Object applyUiChecked(String[] args) throws Exception {
+        requireArgs(args, 8);
+        return CanonicalCompiler.applyDealUiChangeChecked(
+                read(args[1]), read(args[2]), read(args[3]), args[4],
+                new ChangeSetPrecondition(args[5], stringMap(read(args[6]))),
+                uiOperations(read(args[7])));
+    }
+
+    private static Map<String, String> stringMap(String source) {
+        CanonicalJson.Obj object = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(source), "fingerprints");
+        Map<String, String> result = new LinkedHashMap<>();
+        object.entries().forEach(entry -> {
+            if (!(entry.value() instanceof CanonicalJson.Str value)) {
+                throw new IllegalArgumentException("Fingerprint values must be strings");
+            }
+            result.put(entry.key(), value.value());
+        });
+        return Map.copyOf(result);
     }
 
     private static List<DealCompilerWorkspace.Operation> dealOperations(String source) {

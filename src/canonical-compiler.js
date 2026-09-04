@@ -45,9 +45,33 @@ export class CanonicalCompilerClient {
     return this.#invoke("inspect-deal", { deal: source }, ["deal"]);
   }
 
+  async handshake() {
+    return this.#invoke("handshake", {}, []);
+  }
+
+  async queryDealModule(source) {
+    return this.#invoke("query-deal-module", { deal: source }, ["deal"]);
+  }
+
+  async queryDealSymbol({ source, targetId }) {
+    return this.#invoke("query-deal-symbol", { deal: source }, ["deal", targetId]);
+  }
+
+  async queryDealNode({ source, targetId }) {
+    return this.#invoke("query-deal-node", { deal: source }, ["deal", targetId]);
+  }
+
   async applyDealChange({ source, baseDigest, operations }) {
     return this.#invoke("apply-deal", { deal: source, operations: JSON.stringify(operations) },
       ["deal", baseDigest, "operations"]);
+  }
+
+  async applyDealChangeChecked({ source, baseDigest, fingerprints, operations }) {
+    return this.#invoke("apply-deal-checked", {
+      deal: source,
+      fingerprints: JSON.stringify(fingerprints),
+      operations: JSON.stringify(operations),
+    }, ["deal", baseDigest, "fingerprints", "operations"]);
   }
 
   async inspectCanonicalApp({ deal, dealUi, pack, packSpecifier }) {
@@ -65,6 +89,26 @@ export class CanonicalCompilerClient {
       pack,
       operations: JSON.stringify(operations),
     }, ["deal", "dealUi", "pack", packSpecifier, baseDigest, "operations"]);
+  }
+
+  async queryDealUiView({ deal, source, pack, packSpecifier, targetId }) {
+    return this.#invoke("query-ui-view", { deal, dealUi: source, pack },
+      ["deal", "dealUi", "pack", packSpecifier, targetId]);
+  }
+
+  async queryDealUiNode({ deal, source, pack, packSpecifier, targetId }) {
+    return this.#invoke("query-ui-node", { deal, dealUi: source, pack },
+      ["deal", "dealUi", "pack", packSpecifier, targetId]);
+  }
+
+  async applyDealUiChangeChecked({ deal, source, pack, packSpecifier, baseDigest, fingerprints, operations }) {
+    return this.#invoke("apply-ui-checked", {
+      deal,
+      dealUi: source,
+      pack,
+      fingerprints: JSON.stringify(fingerprints),
+      operations: JSON.stringify(operations),
+    }, ["deal", "dealUi", "pack", packSpecifier, baseDigest, "fingerprints", "operations"]);
   }
 
   async #invoke(command, files, arguments_) {

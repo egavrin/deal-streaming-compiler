@@ -32,11 +32,34 @@ export view App(state: app.AppState): View {
 test("real canonical compiler supports atomic DEAL and Deal UI modernization", async () => {
   const compiler = new CanonicalCompilerClient();
   await compiler.setup();
+  const handshake = await compiler.handshake();
+  assert.equal(handshake.protocolVersion, "compiler-protocol-v2");
   const inspected = await compiler.inspectCanonicalApp({ deal: DEAL, dealUi: UI, pack: PACK, packSpecifier: "./ui.pack" });
   assert.equal(inspected.valid, true, JSON.stringify(inspected.diagnostics));
 
   const update = inspected.deal.symbols.find((symbol) => symbol.name === "update");
   const body = inspected.deal.nodes.find((node) => node.ownerId.value === update.id.value && node.kind === "function-body");
+  const bodySlice = await compiler.queryDealNode({ source: DEAL, targetId: body.id.value });
+  assert.match(bodySlice.source, /return \{title:/);
+  assert.doesNotMatch(bodySlice.source, /function update/);
+  const bodyGrant = bodySlice.allowedOperations.find((operation) => operation.operation === "replaceFunctionBody");
+  const unqueried = await compiler.applyDealChangeChecked({
+    source: DEAL,
+    baseDigest: inspected.deal.sourceDigest,
+    fingerprints: {},
+    operations: [{ operation: "replaceFunctionBody", targetId: body.id.value,
+      body: "return {title: state.title, count: state.count + 2};" }],
+  });
+  assert.equal(unqueried.accepted, false);
+  assert.equal(unqueried.diagnostics[0].code, "CP1010");
+  const checked = await compiler.applyDealChangeChecked({
+    source: DEAL,
+    baseDigest: inspected.deal.sourceDigest,
+    fingerprints: { [body.id.value]: bodyGrant.targetFingerprint },
+    operations: [{ operation: "replaceFunctionBody", targetId: body.id.value,
+      body: "return {title: state.title, count: state.count + 2};" }],
+  });
+  assert.equal(checked.accepted, true, JSON.stringify(checked.diagnostics));
   const changed = await compiler.applyDealChange({
     source: DEAL,
     baseDigest: inspected.deal.sourceDigest,
@@ -56,6 +79,14 @@ test("real canonical compiler supports atomic DEAL and Deal UI modernization", a
   assert.match(structural.source, /scoreBonus/);
 
   const text = inspected.dealUi.nodes.find((node) => node.component === "ui.Text");
+  const textSlice = await compiler.queryDealUiNode({
+    deal: structural.source,
+    source: UI,
+    pack: PACK,
+    packSpecifier: "./ui.pack",
+    targetId: text.id.value,
+  });
+  assert.match(textSlice.source, /^ui\.Text/);
   const visual = await compiler.applyDealUiChange({
     deal: structural.source,
     source: UI,

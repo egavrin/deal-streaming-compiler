@@ -25,10 +25,21 @@ complete source bytes, `baseDigest`, pack/interface snapshots as required and co
 operations. Semantic graphs are ephemeral. An internal cache may accelerate repeated inspection but
 must never affect correctness or become persisted application state.
 
-Model tools target compiler-issued `SymbolId` and revision-scoped `NodeId`; they never use source
-comments, text search or offsets as identity. Stale digests and handles are rejected before a
-candidate changes. A semantic transaction is copy, validate, commit. Transport retry cannot mutate
-the graph or consume semantic repair budget.
+The rich compiler API is never copied wholesale into a model prompt. For each turn,
+streaming-compiler derives a compact, versioned Agent Surface containing short revision-local aliases,
+minimum summaries and only the operations relevant to the current step. A model must query an alias
+before a write operation for that target appears. The engine resolves aliases to compiler-issued
+`SymbolId` and revision-scoped `NodeId` internally and supplies the compiler-issued target fingerprint
+as a transaction precondition. Aliases expire whenever either canonical source changes.
+
+Model tools never use source comments, text search or offsets as identity. Stale digests, aliases and
+fingerprints are rejected before a candidate changes. A semantic transaction is copy, validate,
+commit. Transport retry cannot mutate the graph or consume semantic repair budget.
+
+Every provider request records `protocolVersion`, `surfaceVersion`, canonical revision digests,
+surface digest and surface byte/token estimates. Provider token usage remains authoritative for
+benchmarking. Tool schemas are generated dynamically; do not maintain a static copy of the rich API
+or expose source ranges, fingerprints and full opaque ids to the model.
 
 ## Generation And Modernization
 

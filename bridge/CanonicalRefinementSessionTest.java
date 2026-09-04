@@ -43,39 +43,38 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         rejectedDealBodyNarrowsRepairAndRollsForward();
+        unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
         uiOnlyChangeNeverTouchesDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
-        var inspected = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, PACK, "./ui.pack");
-        var update = inspected.deal().symbols().stream()
-                .filter(value -> value.name().equals("update")).findFirst().orElseThrow();
-        var body = inspected.deal().nodes().stream()
-                .filter(value -> value.ownerId().equals(update.id()) && value.kind().equals("function-body"))
-                .findFirst().orElseThrow();
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Increment by two", 6, 2);
-        requireTypedConstants(CompilerProtocolJson.decode(session.nextRequestJson()));
+        String initial = session.nextRequestJson();
+        requireTypedConstants(CompilerProtocolJson.decode(initial));
+        String update = dealSymbolAlias(initial, "update");
+        String body = dealBodyAlias(initial, update);
+        check(!initial.contains("deal-node:"), "agent surface must not expose compiler NodeIds");
         String applyRequest = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
-                "targetId", body.id().value())));
-        check(applyRequest.contains("statements only; omit function declaration and outer braces"),
+                "target", body)));
+        check(applyRequest.contains("Statements only; omit declaration signature and outer braces"),
                 "query and write schema must state the function-body replacement contract");
         List<String> applyTools = toolNames(applyRequest);
         check(applyTools.contains("apply_deal_changes"), "query must advance to the DEAL apply phase");
-        check(!applyTools.contains("query_deal_symbol"), "loaded DEAL context must not be queried repeatedly");
-        check(!applyTools.contains("query_deal_node"), "loaded DEAL context must not be queried repeatedly");
+        check(!applyRequest.contains("\"enum\":[\"" + body + "\"]"),
+                "the loaded body alias must not be offered for repeated querying");
         String repairRequest = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
-                "targetId", body.id().value(),
+                "target", body,
                 "body", "return missing;"), true));
         check(repairRequest.contains("apply_deal_changes"), "repair must retain the rejected transaction tool");
         check(!repairRequest.contains("query_deal_symbol"), "repair must hide unrelated query tools");
         check(repairRequest.contains("return missing"), "repair context must retain the rejected body");
         String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
-                "targetId", body.id().value(),
+                "target", body,
                 "body", "return {title: state.title, count: state.count + 2};"), true));
         CanonicalJson.Obj object = object(result);
         check(booleanField(object, "accepted"), "repaired canonical revision must be accepted");
@@ -84,16 +83,15 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void uiOnlyChangeNeverTouchesDeal() {
-        var inspected = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, PACK, "./ui.pack");
-        var text = inspected.dealUi().nodes().stream()
-                .filter(value -> value.component().equals("ui.Text")).findFirst().orElseThrow();
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Use a static polished headline", 4, 1);
+        String initial = session.nextRequestJson();
+        String text = uiNodeAlias(initial, "ui.Text");
         session.acceptToolCallJson("query_deal_ui_node", CompilerProtocolJson.encode(Map.of(
-                "targetId", text.id().value())));
+                "target", text)));
         String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
                 "operation", "setProperty",
-                "targetId", text.id().value(),
+                "target", text,
                 "property", "value",
                 "expression", "\"Polished\""), true));
         CanonicalJson.Obj object = object(result);
@@ -102,13 +100,31 @@ public final class CanonicalRefinementSessionTest {
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
     }
 
+    private static void unqueriedAliasCannotBeWritten() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Change only update", 4, 2);
+        String initial = session.nextRequestJson();
+        String update = dealSymbolAlias(initial, "update");
+        String updateBody = dealBodyAlias(initial, update);
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String unrelatedBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
+                "target", updateBody)));
+        String rejected = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+                "operation", "replaceFunctionBody",
+                "target", unrelatedBody,
+                "body", "return {title: \"Wrong\", count: 0};"), true));
+        check(rejected.contains("CP1010"), "compiler must reject a write to an unqueried alias");
+        check(rejected.contains(updateBody), "queried target must remain the only writable body");
+    }
+
     private static void batchedQueriesConsumeOneProviderRound() {
-        var inspected = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, PACK, "./ui.pack");
-        var nodes = inspected.dealUi().nodes().stream().limit(2).toList();
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Polish the interface", 2, 1);
+        String initial = session.nextRequestJson();
+        var nodes = uiNodeAliases(initial).stream().limit(2).toList();
         var calls = nodes.stream().map(node -> Map.of(
                 "name", "query_deal_ui_node",
-                "arguments", Map.of("targetId", node.id().value()))).toList();
-        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Polish the interface", 2, 1);
+                "arguments", Map.of("target", node))).toList();
         String request = session.acceptToolCallsJson(CompilerProtocolJson.encode(calls));
         CanonicalJson.Obj object = object(request);
         check(CompilerProtocolJson.intField(object, "round") == 2,
@@ -119,6 +135,57 @@ public final class CanonicalRefinementSessionTest {
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
         return CompilerProtocolJson.encode(Map.of("operations", List.of(operation), "final", finalChange));
+    }
+
+    private static String dealSymbolAlias(String request, String name) {
+        CanonicalJson.Obj deal = inputObject(request, "deal");
+        CanonicalJson.Arr symbols = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(deal, "symbols"), "symbols");
+        return symbols.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "symbol"))
+                .filter(value -> stringField(value, "name").equals(name))
+                .map(value -> stringField(value, "target"))
+                .findFirst().orElseThrow();
+    }
+
+    private static String dealBodyAlias(String request, String ownerAlias) {
+        CanonicalJson.Obj deal = inputObject(request, "deal");
+        CanonicalJson.Arr nodes = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(deal, "nodes"), "nodes");
+        return nodes.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "node"))
+                .filter(value -> stringField(value, "owner").equals(ownerAlias))
+                .filter(value -> stringField(value, "kind").equals("function-body"))
+                .map(value -> stringField(value, "target"))
+                .findFirst().orElseThrow();
+    }
+
+    private static String uiNodeAlias(String request, String component) {
+        CanonicalJson.Obj dealUi = inputObject(request, "dealUi");
+        CanonicalJson.Arr nodes = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(dealUi, "nodes"), "nodes");
+        return nodes.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "node"))
+                .filter(value -> stringField(value, "component").equals(component))
+                .map(value -> stringField(value, "target"))
+                .findFirst().orElseThrow();
+    }
+
+    private static List<String> uiNodeAliases(String request) {
+        CanonicalJson.Obj dealUi = inputObject(request, "dealUi");
+        CanonicalJson.Arr nodes = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(dealUi, "nodes"), "nodes");
+        return nodes.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "node"))
+                .map(value -> stringField(value, "target"))
+                .toList();
+    }
+
+    private static CanonicalJson.Obj inputObject(String request, String field) {
+        String input = stringField(object(request), "input");
+        CanonicalJson.Obj context = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(input), "agent input");
+        return CompilerProtocolJson.requireObject(CompilerProtocolJson.field(context, field), field);
     }
 
     private static CanonicalJson.Obj object(String source) {
