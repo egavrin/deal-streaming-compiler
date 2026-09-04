@@ -293,7 +293,7 @@ public final class CanonicalRefinementSession {
         if (generation && forcedArtifact.equals("dealui")) {
             context.put("componentPack", compactComponentPack());
         }
-        context.put("previousToolResults", transcript);
+        context.put("previousToolResults", agentTranscript());
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!repairDiagnostics.isEmpty()) {
             context.put("repairDirective", Map.of(
@@ -544,6 +544,7 @@ public final class CanonicalRefinementSession {
             appStateBootstrapReplaced |= replacesAppState;
             initialStateBootstrapReplaced |= replacesInitialState;
         }
+        dealSemanticRepairs = 0;
         repairScopes = List.of();
         repairDiagnostics = List.of();
         forcedArtifact = generation
@@ -601,6 +602,7 @@ public final class CanonicalRefinementSession {
             return;
         }
         dealUi = result.source();
+        dealUiSemanticRepairs = 0;
         repairScopes = List.of();
         repairDiagnostics = List.of();
         forcedArtifact = "";
@@ -650,6 +652,13 @@ public final class CanonicalRefinementSession {
 
     private void addTranscript(String tool, Map<String, Object> value) {
         transcript.add(Map.of("tool", tool, "result", value));
+    }
+
+    private List<Map<String, Object>> agentTranscript() {
+        List<Map<String, Object>> relevant = transcript.stream()
+                .filter(entry -> !entry.get("tool").equals("protocol_shadow"))
+                .toList();
+        return relevant.subList(Math.max(0, relevant.size() - 2), relevant.size());
     }
 
     private void recordShadowParity(

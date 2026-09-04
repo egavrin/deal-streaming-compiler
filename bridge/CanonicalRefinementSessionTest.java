@@ -50,6 +50,7 @@ public final class CanonicalRefinementSessionTest {
         greenfieldBuildsDealBeforeDealUi();
         greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState();
         greenfieldFinalFalseKeepsBuildingDeal();
+        acceptedChangeSetResetsTheLocalRepairBudget();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -171,6 +172,44 @@ public final class CanonicalRefinementSessionTest {
                 "the missing initialState body must remain queryable");
         check(stringField(input, "stageObjective").contains("initialState"),
                 "partial bootstrap must identify the one missing unit");
+    }
+
+    private static void acceptedChangeSetResetsTheLocalRepairBudget() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a complex app", 12, 1);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")),
+                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
+                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
+        String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { title: string = \"\"; count: int = 0; }"),
+                Map.of("operation", "replaceFunctionBody", "target", initialBody,
+                        "body", "return {title: \"Ready\", count: 0};")), false));
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String firstRepair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class One {}\nexport class Two {}")), false));
+        check(stringField(object(firstRepair), "status").equals("request"),
+                "the first invalid ChangeSet must request a local repair");
+        String accepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class One {}"),
+                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class Two {}")), false));
+        check(stringField(object(accepted), "status").equals("request"),
+                "an accepted repair must continue greenfield generation");
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String secondRepair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class Three {}\nexport class Four {}")), false));
+        check(stringField(object(secondRepair), "status").equals("request"),
+                "a later ChangeSet must receive a fresh local repair budget");
+        CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(secondRepair), "semanticRepairs");
+        check(repairCount instanceof CanonicalJson.Int value && value.value() == 2,
+                "global repair metrics must retain errors from both ChangeSets");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
