@@ -226,7 +226,7 @@ public final class CanonicalRefinementSession {
             addIfAllowed(operations, UiCompilerWorkspace.INSERT_CHILD, node.id(), Map.of(
                     "index", Map.of("type", "integer", "minimum", 0, "maximum", node.children().size()),
                     "source", Map.of("type", "string")));
-            node.properties().keySet().forEach(property -> addIfAllowed(
+            node.writableProperties().forEach(property -> addIfAllowed(
                     operations, UiCompilerWorkspace.SET_PROPERTY, node.id(), Map.of(
                             "property", constantString(property),
                             "expression", Map.of("type", "string"))));

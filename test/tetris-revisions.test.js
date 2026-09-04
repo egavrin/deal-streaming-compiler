@@ -188,19 +188,9 @@ return {cells: state.cells, playerX: next, paused: state.paused, tick: state.tic
     operations: [{ operation: "setProperty", targetId: title.id.value,
       property: "tone", expression: '"accent"' }],
   });
-  // tone was absent, so compiler correctly requires subtree replacement instead of an ad-hoc insertion.
-  assert.equal(styled.accepted, false);
-  const refined = await compiler.applyDealUiChange({
-    deal,
-    source: dealUi,
-    pack: PACK,
-    packSpecifier: "./ui.pack",
-    baseDigest: inspection.dealUi.sourceDigest,
-    operations: [{ operation: "replaceSubtree", targetId: title.id.value,
-      source: 'ui.Text(value: "Tetris", tone: "accent")' }],
-  });
-  assert.equal(refined.accepted, true, JSON.stringify(refined.diagnostics));
-  dealUi = refined.source;
+  assert.equal(styled.accepted, true, JSON.stringify(styled.diagnostics));
+  assert.match(styled.source, /value: "Tetris", tone: "accent"/);
+  dealUi = styled.source;
   inspection = await inspect(compiler, deal, dealUi);
   revisions.push({ phase: "visual refinement", deal, dealUi });
 
