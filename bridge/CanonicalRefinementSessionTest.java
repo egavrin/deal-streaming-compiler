@@ -46,6 +46,7 @@ public final class CanonicalRefinementSessionTest {
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
         writePhaseHidesAllQueryTools();
+        interfaceChangeAutomaticallyUnlocksRootView();
         uiOnlyChangeNeverTouchesDeal();
         uiDocumentQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -426,6 +427,23 @@ public final class CanonicalRefinementSessionTest {
                 "a successful inspection must unlock the UI transaction");
         check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
                 "the edit phase must hide every query tool so reads cannot be nested in a ChangeSet");
+    }
+
+    private static void interfaceChangeAutomaticallyUnlocksRootView() {
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Add reset behavior", 3, 1);
+        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String request = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "export class ResetAction {}"),
+                Map.of("operation", "addDeclaration", "target", "M1",
+                        "declaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {title: state.title, count: 0}; }")),
+                true));
+        check(toolNames(request).contains("apply_deal_ui_changes"),
+                "an interface change must automatically unlock the affected root view");
+        check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
+                "interface repair must not require another model-selected inspection round");
+        check(request.contains("ui.Column"),
+                "the edit surface must contain the compiler-owned root view slice");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {

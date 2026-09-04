@@ -644,7 +644,19 @@ public final class CanonicalRefinementSession {
         } else {
             addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
         }
+        if (!generation && result.impact().interfaceChanged()) {
+            unlockRootViewAfterInterfaceChange();
+        }
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
+    }
+
+    private void unlockRootViewAfterInterfaceChange() {
+        if (inspection.dealUi() == null) return;
+        UiCompilerWorkspace.UiViewSnapshot target = inspection.dealUi().views().stream()
+                .filter(UiCompilerWorkspace.UiViewSnapshot::root)
+                .findFirst()
+                .orElseGet(() -> inspection.dealUi().views().stream().findFirst().orElse(null));
+        if (target != null) queryDealUiView(alias(target.id()));
     }
 
     private void applyDealFoundation(CanonicalJson.Obj arguments) {
