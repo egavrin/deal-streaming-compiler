@@ -58,6 +58,8 @@ public final class CanonicalRefinementSession {
             records with context-typed object literals such as {count: 0}; DEAL has no new operator.
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
             Use integer platform helpers only when listed by the host contract.
+            Every state/action-to-state handler must include // @ui-update immediately before its
+            export function declaration inside the same declaration string.
             """.strip();
 
     private static final String DEAL_UI_GENERATION_SYSTEM_PROMPT = """
