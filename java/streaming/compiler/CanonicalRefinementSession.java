@@ -100,6 +100,32 @@ public final class CanonicalRefinementSession {
         rounds++;
         CanonicalJson.Obj arguments = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(argumentsJson), "tool arguments");
+        acceptToolCall(name, arguments);
+        return status == Status.REQUEST ? nextRequestJson() : resultJson();
+    }
+
+    /** Accepts one provider turn; multiple calls are permitted only for read-only context queries. */
+    public String acceptToolCallsJson(String callsJson) {
+        if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
+        CanonicalJson.Arr calls = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.decode(callsJson), "tool calls");
+        if (calls.items().isEmpty()) throw new IllegalArgumentException("A provider turn requires at least one tool call");
+        List<CanonicalJson.Obj> values = calls.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "tool call"))
+                .toList();
+        if (values.size() > 1 && values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) {
+            throw new IllegalArgumentException("A provider turn may batch only read-only compiler queries");
+        }
+        rounds++;
+        for (CanonicalJson.Obj value : values) {
+            acceptToolCall(
+                    string(value, "name"),
+                    CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
+        }
+        return status == Status.REQUEST ? nextRequestJson() : resultJson();
+    }
+
+    private void acceptToolCall(String name, CanonicalJson.Obj arguments) {
         switch (name) {
             case "query_deal_symbol" -> queryDealSymbol(string(arguments, "targetId"));
             case "query_deal_node" -> queryDealNode(string(arguments, "targetId"));
@@ -109,7 +135,12 @@ public final class CanonicalRefinementSession {
             case "unchanged" -> unchanged();
             default -> throw new IllegalArgumentException("Unsupported streaming-compiler tool: " + name);
         }
-        return status == Status.REQUEST ? nextRequestJson() : resultJson();
+    }
+
+    private static boolean isReadOnlyQuery(String name) {
+        return name.equals("query_deal_symbol")
+                || name.equals("query_deal_node")
+                || name.equals("query_deal_ui_node");
     }
 
     public String resultJson() {

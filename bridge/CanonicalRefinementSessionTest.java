@@ -43,6 +43,7 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         rejectedDealBodyNarrowsRepairAndRollsForward();
+        batchedQueriesConsumeOneProviderRound();
         uiOnlyChangeNeverTouchesDeal();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
@@ -99,6 +100,21 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
+    }
+
+    private static void batchedQueriesConsumeOneProviderRound() {
+        var inspected = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, PACK, "./ui.pack");
+        var nodes = inspected.dealUi().nodes().stream().limit(2).toList();
+        var calls = nodes.stream().map(node -> Map.of(
+                "name", "query_deal_ui_node",
+                "arguments", Map.of("targetId", node.id().value()))).toList();
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Polish the interface", 2, 1);
+        String request = session.acceptToolCallsJson(CompilerProtocolJson.encode(calls));
+        CanonicalJson.Obj object = object(request);
+        check(CompilerProtocolJson.intField(object, "round") == 2,
+                "one batched provider turn must advance the round exactly once");
+        check(toolNames(request).contains("apply_deal_ui_changes"),
+                "batched UI context must expose the targeted write transaction");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
