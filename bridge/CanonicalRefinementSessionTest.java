@@ -84,6 +84,10 @@ public final class CanonicalRefinementSessionTest {
                 "accepted greenfield DEAL must force the Deal UI stage: " + dealAccepted);
         check(dealAcceptedInput.entries().stream().anyMatch(entry -> entry.key().equals("componentPack")),
                 "the UI stage must receive the compiler-owned component manifest");
+        check(!dealAccepted.contains("apply_deal_changes"),
+                "Deal UI surface must not retain DEAL transaction history: " + dealAccepted);
+        check(!dealAccepted.contains("replaceDeclaration"),
+                "Deal UI surface must not expose DEAL operation schemas: " + dealAccepted);
         String view = uiViewAlias(dealAccepted, "App");
         String uiWrite = session.acceptToolCallJson(
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));

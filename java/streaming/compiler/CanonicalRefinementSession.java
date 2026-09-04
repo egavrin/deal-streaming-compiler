@@ -35,12 +35,11 @@ public final class CanonicalRefinementSession {
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             """.strip();
-    private static final String GENERATION_SYSTEM_PROMPT = """
-            Create one complete canonical DEAL application through the compact compiler surface.
-            Work sequentially: query the DEAL module and existing bootstrap declarations, replace
-            them with one cohesive application in one atomic transaction, then query and replace
-            the Deal UI root view against the exact compiler-extracted interface. Emit exactly one
-            write tool call per provider turn; read-only queries may be batched. Never return prose.
+    private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
+            Create the behavior of one complete canonical DEAL application through the compact
+            compiler surface. Query the DEAL module and bootstrap declarations, then submit one
+            cohesive atomic transaction. Emit exactly one write tool call; read-only queries may
+            be batched. Never return prose.
             Each declaration operation contains exactly one top-level class or function. Replace
             bootstrap AppState once, replace only the statements inside initialState, and add every
             other class or function with a separate addDeclaration operation in the same ChangeSet.
@@ -59,7 +58,13 @@ public final class CanonicalRefinementSession {
             records with context-typed object literals such as {count: 0}; DEAL has no new operator.
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
             Use integer platform helpers only when listed by the host contract.
+            """.strip();
 
+    private static final String DEAL_UI_GENERATION_SYSTEM_PROMPT = """
+            Create the complete Deal UI presentation for the supplied compiler-extracted
+            AppInterface. Query the bootstrap root view, then replace its body in one atomic UI
+            transaction and mark it final. Emit exactly one write tool call; read-only queries may
+            be batched. Use only operations in the current tool schema. Never return prose.
             Deal UI is declarative and read-only. Use only components and tokens in componentPack,
             field paths from interface, action constructors, literals, When and ForEach. It has no
             indexing, array/object literals, assignments, arbitrary calls, length, methods or
@@ -171,7 +176,11 @@ public final class CanonicalRefinementSession {
         request.put("revision", Map.of(
                 "deal", inspection.deal().sourceDigest(),
                 "dealUi", inspection.dealUi() == null ? "" : inspection.dealUi().sourceDigest()));
-        request.put("instructions", generation ? GENERATION_SYSTEM_PROMPT : REFINEMENT_SYSTEM_PROMPT);
+        request.put("instructions", generation
+                ? forcedArtifact.equals("dealui")
+                        ? DEAL_UI_GENERATION_SYSTEM_PROMPT
+                        : DEAL_GENERATION_SYSTEM_PROMPT
+                : REFINEMENT_SYSTEM_PROMPT);
         request.put("input", input);
         request.put("tools", tools);
         request.put("round", rounds + 1);
@@ -463,7 +472,14 @@ public final class CanonicalRefinementSession {
         forcedArtifact = generation ? "dealui" : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
-        addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
+        if (generation) {
+            // UI generation is a separate provider transaction. Its complete contract is the
+            // freshly extracted AppInterface plus the component pack. Retaining DEAL tool calls
+            // biases providers toward operation names that are no longer in the active surface.
+            transcript.clear();
+        } else {
+            addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
+        }
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
     }
 
