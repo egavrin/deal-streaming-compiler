@@ -538,8 +538,27 @@ public final class CanonicalRefinementSession {
             reject("apply_deal_changes", result.diagnostics(), "deal", operations);
             return;
         }
-        deal = result.source();
         boolean sourceChanged = !result.sourceDigest().equals(beforeDigest);
+        if (generation && !sourceChanged && !finalChange) {
+            SemanticId owner = operations.get(0).targetId();
+            List<RepairScope> scopes = operations.stream()
+                    .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
+                    .distinct()
+                    .toList();
+            reject("apply_deal_changes", List.of(new StructuredDiagnostic(
+                    "SC1002",
+                    "error",
+                    "The accepted transaction made no source progress; change the operation or finish DEAL",
+                    null,
+                    owner,
+                    "a source-changing operation or final=true",
+                    "unchanged source",
+                    operations.stream().map(DealCompilerWorkspace.Operation::targetId).distinct().toList(),
+                    scopes,
+                    "queryDealNode(" + owner.value() + ")")), "deal", operations);
+            return;
+        }
+        deal = result.source();
         if (sourceChanged) {
             appStateBootstrapReplaced |= replacesAppState;
             initialStateBootstrapReplaced |= replacesInitialState;
@@ -552,13 +571,6 @@ public final class CanonicalRefinementSession {
                 : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
-        if (generation && !sourceChanged && !finalChange) {
-            addTranscript("apply_deal_changes", Map.of(
-                    "accepted", false,
-                    "code", "SC1002",
-                    "message", "final=false transaction made no source progress; add missing declarations or finish DEAL"));
-            return;
-        }
         if (generation && finalChange) {
             // UI generation is a separate provider transaction. Its complete contract is the
             // freshly extracted AppInterface plus the component pack. Retaining DEAL tool calls
@@ -796,6 +808,16 @@ public final class CanonicalRefinementSession {
                 .map(SymbolSnapshot::name)
                 .sorted()
                 .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private static String operationName(DealCompilerWorkspace.Operation operation) {
+        return switch (operation) {
+            case DealCompilerWorkspace.AddDeclaration ignored -> DealCompilerWorkspace.ADD_DECLARATION;
+            case DealCompilerWorkspace.RemoveDeclaration ignored -> DealCompilerWorkspace.REMOVE_DECLARATION;
+            case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
+            case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
+            case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
+        };
     }
 
     private void addQueryTool(

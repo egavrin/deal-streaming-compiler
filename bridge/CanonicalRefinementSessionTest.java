@@ -51,6 +51,7 @@ public final class CanonicalRefinementSessionTest {
         greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState();
         greenfieldFinalFalseKeepsBuildingDeal();
         acceptedChangeSetResetsTheLocalRepairBudget();
+        greenfieldNoOpBecomesScopedRepair();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -210,6 +211,27 @@ public final class CanonicalRefinementSessionTest {
         CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(secondRepair), "semanticRepairs");
         check(repairCount instanceof CanonicalJson.Int value && value.value() == 2,
                 "global repair metrics must retain errors from both ChangeSets");
+    }
+
+    private static void greenfieldNoOpBecomesScopedRepair() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a complex app", 6, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        session.acceptToolCallJson("query_deal_symbol", CompilerProtocolJson.encode(Map.of(
+                "target", appState)));
+        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
+                Map.of("operation", "replaceDeclaration", "target", appState,
+                        "declaration", "export class AppState { title: string = \"\"; }")), false));
+        check(stringField(object(repair), "status").equals("request"),
+                "a greenfield no-op must request a repair");
+        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(repair), "input")), "input");
+        check(CompilerProtocolJson.field(input, "repairDirective") instanceof CanonicalJson.Obj,
+                "a greenfield no-op must expose an explicit repair directive");
+        CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repair), "semanticRepairs");
+        check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
+                "a no-op must consume the current ChangeSet repair budget");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
