@@ -292,7 +292,7 @@ public final class CanonicalRefinementSession {
         boolean finalChange = booleanField(arguments, "final");
         var result = CanonicalCompiler.applyDealChange(deal, inspection.deal().sourceDigest(), operations);
         if (!result.accepted()) {
-            reject("apply_deal_changes", result.diagnostics(), "deal");
+            reject("apply_deal_changes", result.diagnostics(), "deal", operations);
             return;
         }
         deal = result.source();
@@ -310,7 +310,7 @@ public final class CanonicalRefinementSession {
         var result = CanonicalCompiler.applyDealUiChange(
                 deal, dealUi, pack, packSpecifier, inspection.dealUi().sourceDigest(), operations);
         if (!result.accepted()) {
-            reject("apply_deal_ui_changes", result.diagnostics(), "dealui");
+            reject("apply_deal_ui_changes", result.diagnostics(), "dealui", operations);
             return;
         }
         dealUi = result.source();
@@ -321,9 +321,16 @@ public final class CanonicalRefinementSession {
         if (inspection.valid() && finalChange) status = Status.COMPLETE;
     }
 
-    private void reject(String tool, List<StructuredDiagnostic> diagnostics, String artifact) {
+    private void reject(
+            String tool,
+            List<StructuredDiagnostic> diagnostics,
+            String artifact,
+            Object attemptedOperations) {
         semanticRepairs++;
-        addTranscript(tool, Map.of("accepted", false, "diagnostics", diagnostics));
+        addTranscript(tool, Map.of(
+                "accepted", false,
+                "diagnostics", diagnostics,
+                "attemptedOperations", attemptedOperations));
         if (semanticRepairs > maxSemanticRepairs) {
             status = Status.FAILED;
             deal = previousDeal;

@@ -69,6 +69,7 @@ public final class CanonicalRefinementSessionTest {
                 "body", "return missing;"), true));
         check(repairRequest.contains("apply_deal_changes"), "repair must retain the rejected transaction tool");
         check(!repairRequest.contains("query_deal_symbol"), "repair must hide unrelated query tools");
+        check(repairRequest.contains("return missing"), "repair context must retain the rejected body");
         String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
                 "targetId", body.id().value(),
