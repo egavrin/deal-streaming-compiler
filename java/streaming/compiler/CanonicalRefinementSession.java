@@ -25,6 +25,8 @@ public final class CanonicalRefinementSession {
             Never regenerate an unrelated unit. Compiler diagnostics, semantic IDs and writable
             repair scopes are authoritative. Use no scenario templates. Set final to false only when
             another behavior or visual transaction is required. Emit exactly one tool call.
+            replaceFunctionBody and replaceBlockBody accept only statements inside the existing
+            braces. Never include a function signature, declaration, or the outer braces in body.
             """.strip();
 
     private final String previousDeal;
@@ -201,7 +203,9 @@ public final class CanonicalRefinementSession {
                         ? DealCompilerWorkspace.REPLACE_FUNCTION_BODY
                         : DealCompilerWorkspace.REPLACE_BLOCK_BODY,
                 node.id(),
-                Map.of("body", Map.of("type", "string"))));
+                Map.of("body", Map.of(
+                        "type", "string",
+                        "description", "DEAL statements inside the existing body only; omit the declaration signature and outer braces"))));
         return operations;
     }
 
@@ -251,9 +255,14 @@ public final class CanonicalRefinementSession {
         var writableNodes = inspection.deal().nodes().stream()
                 .filter(node -> node.ownerId().equals(symbol.id()) && node.kind().equals("function-body"))
                 .toList();
+        var writableBodies = writableNodes.stream().map(node -> Map.of(
+                "node", node,
+                "bodySource", sourceRange(deal, node.range()),
+                "replacementContract", "statements only; omit function declaration and outer braces"))
+                .toList();
         addTranscript("query_deal_symbol", Map.of(
                 "symbol", symbol,
-                "writableNodes", writableNodes,
+                "writableBodies", writableBodies,
                 "source", sourceRange(deal, symbol.range())));
         dealContextLoaded = true;
         dealContextIds.add(symbol.id().value());
@@ -267,7 +276,8 @@ public final class CanonicalRefinementSession {
                 .orElseThrow(() -> new IllegalArgumentException("Unknown DEAL node " + id));
         addTranscript("query_deal_node", Map.of(
                 "node", node,
-                "source", sourceRange(deal, node.range())));
+                "bodySource", sourceRange(deal, node.range()),
+                "replacementContract", "statements only; omit function declaration and outer braces"));
         dealContextLoaded = true;
         dealContextIds.add(node.id().value());
         dealContextNodeIds.add(node.id().value());

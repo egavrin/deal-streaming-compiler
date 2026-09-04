@@ -59,6 +59,8 @@ public final class CanonicalRefinementSessionTest {
         requireTypedConstants(CompilerProtocolJson.decode(session.nextRequestJson()));
         String applyRequest = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
                 "targetId", body.id().value())));
+        check(applyRequest.contains("statements only; omit function declaration and outer braces"),
+                "query and write schema must state the function-body replacement contract");
         List<String> applyTools = toolNames(applyRequest);
         check(applyTools.contains("apply_deal_changes"), "query must advance to the DEAL apply phase");
         check(!applyTools.contains("query_deal_symbol"), "loaded DEAL context must not be queried repeatedly");
