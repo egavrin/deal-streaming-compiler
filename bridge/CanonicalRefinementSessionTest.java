@@ -66,7 +66,35 @@ public final class CanonicalRefinementSessionTest {
         emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
         rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings();
         greenfieldBehaviorBatchesAreCompilerBounded();
+        oversizedFoundationRetriesWithoutCrashingOrConsumingRepair();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void oversizedFoundationRetriesWithoutCrashingOrConsumingRepair() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a recurring workout schedule", 8, 2);
+        session.nextRequestJson();
+        StringBuilder body = new StringBuilder("let items: int[] = [];\n");
+        for (int index = 0; index < 800; index++) {
+            body.append("items[items.length] = ").append(index).append(";\n");
+        }
+        body.append("return {title: \"Health\", count: 0};");
+        String retry = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
+                "initialStateBody", body.toString())));
+        check(toolNames(retry).contains("apply_deal_foundation"),
+                "an oversized foundation must retain the narrow bootstrap tool");
+        check(retry.contains("SC2003") && retry.contains("workspaceChanged\\\":false")
+                        && retry.contains("semanticRepairConsumed\\\":false"),
+                "an Agent Surface violation must be recoverable and must not consume semantic repair: " + retry);
+
+        String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
+                "initialStateBody", "return {title: \"Health\", count: 0};")));
+        check(toolNames(behavior).contains("append_deal_behavior"),
+                "a compact retry must continue generation in the same workspace");
     }
 
     private static void greenfieldBehaviorBatchesAreCompilerBounded() {
@@ -85,16 +113,14 @@ public final class CanonicalRefinementSessionTest {
                 "handlerDeclaration", "// @ui-update\n"
                         + "export function increment(state: AppState, action: IncrementAction): AppState { "
                         + "return {title: state.title, count: state.count + 1}; }");
-        boolean rejected = false;
-        try {
-            session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
-                    "supportingDeclarations", List.of(),
-                    "actionHandlers", List.of(pair, pair, pair),
-                    "final", false)));
-        } catch (IllegalArgumentException expected) {
-            rejected = expected.getMessage().contains("at most 2 action-handler pairs");
-        }
-        check(rejected, "the compiler must reject an oversized behavior batch even if a provider ignores its schema");
+        String rejected = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "actionHandlers", List.of(pair, pair, pair),
+                "final", false)));
+        check(toolNames(rejected).contains("append_deal_behavior")
+                        && rejected.contains("SC2005")
+                        && rejected.contains("semanticRepairConsumed\\\":false"),
+                "the compiler must recoverably reject an oversized behavior batch without consuming semantic repair");
     }
 
     private static void inspectChangeSchemaKeepsArtifactAnchorsDisjoint() {

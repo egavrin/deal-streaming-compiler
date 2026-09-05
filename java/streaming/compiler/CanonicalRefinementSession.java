@@ -1057,18 +1057,28 @@ public final class CanonicalRefinementSession {
         CanonicalJson.Arr declarations = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
         if (declarations.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
-            throw new IllegalArgumentException(
+            rejectAgentSurface(
+                    "apply_deal_foundation",
+                    "SC2001",
                     "A bootstrap batch accepts at most " + MAX_SUPPORTING_DECLARATIONS_PER_BATCH
-                            + " supporting declarations");
+                            + " supporting declarations. Merge presentation-only records or defer non-state helpers to behavior batches.");
+            return;
         }
         String appStateDeclaration = string(arguments, "appStateDeclaration");
         String initialStateBody = string(arguments, "initialStateBody");
         if (appStateDeclaration.length() > MAX_BOOTSTRAP_DECLARATION_CHARS) {
-            throw new IllegalArgumentException("AppState exceeds the compact bootstrap limit");
+            rejectAgentSurface(
+                    "apply_deal_foundation",
+                    "SC2002",
+                    "AppState exceeds the compact bootstrap limit. Keep canonical inputs and derived summaries; remove duplicated presentation fields.");
+            return;
         }
         if (initialStateBody.length() > MAX_INITIAL_STATE_BODY_CHARS) {
-            throw new IllegalArgumentException(
-                    "initialState exceeds the compact bootstrap limit; store rules instead of materialized occurrences");
+            rejectAgentSurface(
+                    "apply_deal_foundation",
+                    "SC2003",
+                    "initialState exceeds the compact bootstrap limit. Store recurring schedule rules and a small current-day seed; generate occurrences in a helper or update instead of enumerating them.");
+            return;
         }
         String module = alias(inspection.deal().moduleId());
         for (CanonicalJson.Value value : declarations.items()) {
@@ -1103,9 +1113,12 @@ public final class CanonicalRefinementSession {
         CanonicalJson.Arr supporting = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
         if (supporting.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
-            throw new IllegalArgumentException(
+            rejectAgentSurface(
+                    "append_deal_behavior",
+                    "SC2004",
                     "A behavior batch accepts at most " + MAX_SUPPORTING_DECLARATIONS_PER_BATCH
-                            + " supporting declarations");
+                            + " supporting declarations. Submit a smaller batch with final=false.");
+            return;
         }
         for (CanonicalJson.Value value : supporting.items()) {
             if (!(value instanceof CanonicalJson.Str declaration)) {
@@ -1119,9 +1132,12 @@ public final class CanonicalRefinementSession {
         CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
                 field(arguments, "actionHandlers"), "actionHandlers");
         if (pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
-            throw new IllegalArgumentException(
+            rejectAgentSurface(
+                    "append_deal_behavior",
+                    "SC2005",
                     "A behavior batch accepts at most " + MAX_ACTION_HANDLERS_PER_BATCH
-                            + " action-handler pairs; commit this batch with final=false and continue");
+                            + " action-handler pairs. Commit a smaller batch with final=false and continue.");
+            return;
         }
         for (CanonicalJson.Value value : pairs.items()) {
             CanonicalJson.Obj pair = CompilerProtocolJson.requireObject(value, "action-handler pair");
@@ -1525,6 +1541,16 @@ public final class CanonicalRefinementSession {
                 && !diagnostics.isEmpty()
                 && diagnostics.stream().allMatch(value -> value.code().equals("E2002"));
         forcedArtifact = artifact;
+    }
+
+    private void rejectAgentSurface(String tool, String code, String instruction) {
+        addTranscript(tool, Map.of(
+                "accepted", false,
+                "category", "agent_surface_contract",
+                "code", code,
+                "instruction", instruction,
+                "workspaceChanged", false,
+                "semanticRepairConsumed", false));
     }
 
     private boolean rejectRepeatedAttempt(String artifact, Object attemptedOperations) {
