@@ -593,7 +593,7 @@ public final class CanonicalRefinementSession {
     private Map<String, Object> dealStateEvolutionTool() {
         return tool(
                 "evolve_deal_state",
-                "Atomically evolve the root state schema and initializer with their directly dependent records and action-handler pairs. AppState and initialState are both required, so a half-applied schema change cannot enter repair.",
+                "Atomically complete one root-state schema evolution with its initializer, directly dependent records and up to four cohesive action-handler pairs. A successful transaction finishes DEAL for this refinement and advances to affected Deal UI.",
                 objectSchema(Map.of(
                         "supportingDeclarations", Map.of(
                                 "type", "array", "maxItems", MAX_FOUNDATION_RECORD_DECLARATIONS,
@@ -608,7 +608,9 @@ public final class CanonicalRefinementSession {
                         "actionHandlers", Map.of(
                                 "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
                                 "type", "array", "items", actionHandlerSchema()),
-                        "final", Map.of("type", "boolean"))));
+                        "final", Map.of(
+                                "type", "boolean", "const", true,
+                                "description", "Always true. Additional behavior belongs to a later compiler-mediated refinement"))));
     }
 
     private boolean stateEvolutionAvailable() {

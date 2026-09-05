@@ -350,7 +350,7 @@ public final class CanonicalRefinementSessionTest {
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class TogglePauseAction {}",
                         "handlerDeclaration", "// @ui-update\nexport function togglePause(state: AppState, action: TogglePauseAction): AppState { return {title: state.title, count: state.count, paused: !state.paused}; }")),
-                "final", false)));
+                "final", true)));
         check(stringField(object(next), "input").contains("TogglePauseAction")
                         && stringField(object(next), "input").contains("paused"),
                 "the compiler must commit the complete state schema group and continue from its new interface");
