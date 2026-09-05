@@ -37,6 +37,8 @@ public final class CanonicalRefinementSession {
             query operation inside a ChangeSet. Emit exactly one write tool call.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
+            Inspecting a DEAL symbol or body also unlocks adding a new sibling declaration when the
+            requested change needs a new record, action, helper or handler.
             """.strip();
     private static final String DEAL_EDIT_CONTRACT = """
 
@@ -581,6 +583,7 @@ public final class CanonicalRefinementSession {
         SemanticId id = resolveAlias(target, "S");
         SemanticSlice slice = CanonicalCompiler.queryDealSymbol(deal, id);
         grant(dealGrants, slice.allowedOperations());
+        grantModuleDeclarationInsertion();
         queriedAliases.add(target);
         addTranscript("query_deal_symbol", compactDealSlice(slice));
         forcedArtifact = "deal";
@@ -590,9 +593,17 @@ public final class CanonicalRefinementSession {
         SemanticId id = resolveAlias(target, "B");
         SemanticSlice slice = CanonicalCompiler.queryDealNode(deal, id);
         grant(dealGrants, slice.allowedOperations());
+        grantModuleDeclarationInsertion();
         queriedAliases.add(target);
         addTranscript("query_deal_node", compactDealSlice(slice));
         forcedArtifact = "deal";
+    }
+
+    private void grantModuleDeclarationInsertion() {
+        SemanticSlice module = CanonicalCompiler.queryDealModule(deal);
+        module.allowedOperations().stream()
+                .filter(value -> value.operation().equals(DealCompilerWorkspace.ADD_DECLARATION))
+                .forEach(value -> dealGrants.put(grantKey(value.operation(), value.targetId()), value));
     }
 
     private void queryDealUiView(String target) {

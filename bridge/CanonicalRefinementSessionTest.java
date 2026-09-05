@@ -46,6 +46,7 @@ public final class CanonicalRefinementSessionTest {
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
         writePhaseHidesAllQueryTools();
+        dealBodyInspectionCanAddSiblingDeclarations();
         interfaceChangeAutomaticallyUnlocksRootView();
         uiOnlyChangeNeverTouchesDeal();
         uiViewQueryCanAddAView();
@@ -447,6 +448,22 @@ public final class CanonicalRefinementSessionTest {
                 "a successful inspection must unlock the UI transaction");
         check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
                 "the edit phase must hide every query tool so reads cannot be nested in a ChangeSet");
+    }
+
+    private static void dealBodyInspectionCanAddSiblingDeclarations() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add a pause action and update the existing handler", 3, 1);
+        String initial = session.nextRequestJson();
+        String update = dealSymbolAlias(initial, "update");
+        String body = dealBodyAlias(initial, update);
+        String request = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
+                "target", body)));
+        check(request.contains("addDeclaration"),
+                "body inspection must unlock a sibling declaration without exposing a second read phase");
+        check(request.contains("replaceFunctionBody"),
+                "body inspection must retain the targeted body replacement");
+        check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
+                "the combined write surface must still hide all query tools");
     }
 
     private static void interfaceChangeAutomaticallyUnlocksRootView() {
