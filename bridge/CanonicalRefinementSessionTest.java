@@ -51,6 +51,7 @@ public final class CanonicalRefinementSessionTest {
         batchedQueriesConsumeOneProviderRound();
         writePhaseHidesAllQueryTools();
         dealBodyInspectionCanAddSiblingDeclarations();
+        refinementActionInsertionCanContinueInDeal();
         rawDeclarationInsertionIsHiddenBehindSemanticTools();
         interfaceChangeRequestsMinimalUiInspection();
         interfaceChangeUsesMinimalChildInsertion();
@@ -72,6 +73,24 @@ public final class CanonicalRefinementSessionTest {
         greenfieldBehaviorBatchesAreCompilerBounded();
         oversizedFoundationRetriesWithoutCrashingOrConsumingRepair();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void refinementActionInsertionCanContinueInDeal() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add pause and restart actions", 4, 1);
+        String edit = session.acceptToolCallJson(
+                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        check(toolNames(edit).contains("add_deal_action_handler"),
+                "module inspection must expose semantic action insertion");
+        String next = session.acceptToolCallJson("add_deal_action_handler", CompilerProtocolJson.encode(Map.of(
+                "actionDeclaration", "export class PauseAction {}",
+                "handlerDeclaration", "// @ui-update\nexport function pause(state: AppState, action: PauseAction): AppState { return state; }",
+                "final", false)));
+        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
+        check(stringField(input, "requiredArtifact").equals("deal")
+                        && toolNames(next).contains("inspect_deal_change"),
+                "a partial semantic insertion must keep refinement in DEAL for the next local cone");
     }
 
     private static void refinementPromptDistinguishesValidityFromRequestCompletion() {

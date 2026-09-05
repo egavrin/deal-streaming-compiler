@@ -594,7 +594,9 @@ public final class CanonicalRefinementSession {
                         "handlerDeclaration", Map.of(
                                 "type", "string",
                                 "description", "Exactly one complete handler for that Action, starting with // @ui-update immediately before export function"),
-                        "final", Map.of("type", "boolean", "const", true))));
+                        "final", Map.of(
+                                "type", "boolean",
+                                "description", "False when another requested DEAL change remains; true only when this action-handler pair completes behavior"))));
     }
 
     private Map<String, Object> dealSupportingDeclarationTool() {
@@ -1059,6 +1061,7 @@ public final class CanonicalRefinementSession {
         clearRejectedAttempt();
         forcedArtifact = generation
                 ? finalChange ? "dealui" : "deal"
+                : !finalChange ? "deal"
                 : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
@@ -1516,6 +1519,7 @@ public final class CanonicalRefinementSession {
         dealSemanticRepairs = 0;
         forcedArtifact = generation
                 ? finalChange ? "dealui" : "deal"
+                : !finalChange ? "deal"
                 : change.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
