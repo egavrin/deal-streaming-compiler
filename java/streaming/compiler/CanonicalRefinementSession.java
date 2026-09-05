@@ -80,10 +80,9 @@ public final class CanonicalRefinementSession {
             assignment, arbitrary calls, length, methods, coercion or ternaries. Render dynamic collections
             only with ForEach(state.items, item: app.Item, key: item.id) { ... }. Use only compiler-published
             components, state paths, action constructors and tokens. A view body has exactly one root node.
-            Prefer the smallest compiler-owned UI edit that satisfies the request. Use
-            replace_deal_ui_subtree for a local structural change and preserve every sibling outside
-            that node. Replace a whole view only when the requested hierarchy truly changes across
-            the complete screen. Never emulate view replacement by removing and re-adding the root view.
+            Select exactly one compiler-owned UI node, then use replace_deal_ui_subtree and preserve
+            every sibling outside that node. The write phase exposes only that subtree, its immediate
+            hierarchy and compatible bindings. Never request property, child, view or document edits.
             """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
@@ -752,18 +751,8 @@ public final class CanonicalRefinementSession {
                     DealCompilerWorkspace.REPLACE_BLOCK_BODY,
                     DealCompilerWorkspace.SET_CAPABILITIES));
         } else {
-            targets.addAll(aliases("D"));
-            targets.addAll(aliases("V"));
             targets.addAll(aliases("U"));
-            operations.addAll(List.of(
-                    UiCompilerWorkspace.ADD_VIEW,
-                    UiCompilerWorkspace.REMOVE_VIEW,
-                    UiCompilerWorkspace.REPLACE_VIEW_BODY,
-                    UiCompilerWorkspace.REPLACE_SUBTREE,
-                    UiCompilerWorkspace.INSERT_CHILD,
-                    UiCompilerWorkspace.REMOVE_NODE,
-                    UiCompilerWorkspace.MOVE_NODE,
-                    UiCompilerWorkspace.SET_PROPERTY));
+            operations.add(UiCompilerWorkspace.REPLACE_SUBTREE);
         }
         return objectSchema(Map.of(
                 "anchors", Map.of(
@@ -969,6 +958,12 @@ public final class CanonicalRefinementSession {
                 ? !(value.startsWith("M") || value.startsWith("S") || value.startsWith("B"))
                 : !(value.startsWith("D") || value.startsWith("V") || value.startsWith("U")));
         if (wrongAlias) throw new IllegalArgumentException("inspect anchor belongs to another artifact");
+        if (!generation && artifact.equals("dealui")
+                && (anchorAliases.size() != 1
+                || !requestedOperations.equals(List.of(UiCompilerWorkspace.REPLACE_SUBTREE)))) {
+            throw new IllegalArgumentException(
+                    "Deal UI refinement requires exactly one UI node and replaceSubtree");
+        }
         List<SemanticId> anchors = anchorAliases.stream()
                 .map(value -> resolveAlias(value, null)).toList();
         if (artifact.equals("deal") && selectsStateEvolution(anchors)) {

@@ -69,7 +69,7 @@ public final class CanonicalRefinementSessionTest {
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
-        numericUiConcatenationRequestsWholeBodyCleanup();
+        numericUiConcatenationRequestsWholeSubtreeCleanup();
         emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
         rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings();
         greenfieldBehaviorBatchesAreCompilerBounded();
@@ -221,25 +221,25 @@ public final class CanonicalRefinementSessionTest {
                 "repair surface must explain the supported representation instead of repeating E3010: " + repair);
     }
 
-    private static void numericUiConcatenationRequestsWholeBodyCleanup() {
+    private static void numericUiConcatenationRequestsWholeSubtreeCleanup() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Show a compact count summary", 5, 2);
         String initial = session.nextRequestJson();
-        String app = uiViewAlias(initial, "App");
+        String column = uiNodeAlias(initial, "ui.Column");
         String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
-                "anchors", List.of(app),
-                "requestedOperations", List.of("replaceViewBody"))));
-        String repair = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
-                "operation", "replaceViewBody",
-                "target", app,
-                "body", "ui.Column() { ui.Text(value: state.count + \" items\") "
-                        + "ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) }"), true));
+                "anchors", List.of(column),
+                "requestedOperations", List.of("replaceSubtree"))));
+        String repair = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
+                "target", column,
+                "source", "ui.Column() { ui.Text(value: state.count + \" items\") "
+                        + "ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) }",
+                "final", true)));
         check(toolNames(repair).contains("patch_repair_slot"),
                 "numeric UI concatenation must enter compiler-owned repair");
         check(repair.contains("Scan the complete replacement for every numeric + string expression")
                         && repair.contains("Never concatenate numeric state")
                         && repair.contains("ui.IntText"),
-                "the repair contract must prevent one-error-at-a-time whole-view retries: " + repair);
+                "the repair contract must prevent one-error-at-a-time subtree retries: " + repair);
     }
 
     private static void emptyArrayRepairPublishesAConstrainedFunctionBodyContract() {
@@ -611,15 +611,15 @@ public final class CanonicalRefinementSessionTest {
         String text = uiNodeAlias(uiInitial, "ui.Text");
         uiSession.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of(text),
-                "requestedOperations", List.of("setProperty"))));
-        String uiRepair = uiSession.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
-                "operation", "setProperty",
-                "property", "value",
-                "expression", "state.title"), true));
+                "requestedOperations", List.of("replaceSubtree"))));
+        String uiRepair = uiSession.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
+                "target", text,
+                "source", "ui.Text(value: state.title)",
+                "final", true)));
         check(uiRepair.contains("\"tools\""), "Deal UI no-op must remain repairable: " + uiRepair);
-        check(toolNames(uiRepair).contains("apply_deal_ui_changes") && uiRepair.contains("SC1002")
-                        && uiRepair.contains("Must differ from the compiler-rejected previous value"),
-                "a final refinement write with unchanged Deal UI source must become scoped repair");
+        check(toolNames(uiRepair).equals(List.of("replace_deal_ui_subtree")) && uiRepair.contains("SC1002")
+                        && uiRepair.contains("Never resubmit the previous payload"),
+                "a final refinement write with unchanged Deal UI source must become scoped repair: " + uiRepair);
     }
 
     private static void duplicateGreenfieldDeclarationsCanOnlyFinishDeal() {
@@ -756,13 +756,13 @@ public final class CanonicalRefinementSessionTest {
                 DEAL, UI, PACK, "./ui.pack", "Use a static polished headline", 4, 1);
         String initial = session.nextRequestJson();
         String text = uiNodeAlias(initial, "ui.Text");
-        session.acceptToolCallJson("query_deal_ui_node", CompilerProtocolJson.encode(Map.of(
-                "target", text)));
-        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
-                "operation", "setProperty",
+        session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(text),
+                "requestedOperations", List.of("replaceSubtree"))));
+        String result = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
                 "target", text,
-                "property", "value",
-                "expression", "\"Polished\""), true));
+                "source", "ui.Text(value: \"Polished\")",
+                "final", true)));
         CanonicalJson.Obj object = object(result);
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
@@ -788,16 +788,19 @@ public final class CanonicalRefinementSessionTest {
         String column = uiNodeAlias(uiRequest, "ui.Column");
         String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of(column),
-                "requestedOperations", List.of("insertChild"))));
-        check(toolNames(write).contains("apply_deal_ui_changes") && write.contains("insertChild"),
-                "an unreachable new action must expose insertion into an inspected container");
-        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
-                "operation", "insertChild",
+                "requestedOperations", List.of("replaceSubtree"))));
+        check(toolNames(write).equals(List.of("replace_deal_ui_subtree")),
+                "an unreachable new action must expose only replacement of the selected container subtree");
+        String result = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
                 "target", column,
-                "index", 2,
-                "source", "ui.Button(text: \"Undo\", onClick: action app.UndoAction {})"), true));
+                "source", "ui.Column() {\n"
+                        + "  ui.Text(value: state.title)\n"
+                        + "  ui.Button(text: \"Undo\", onClick: action app.UndoAction {})\n"
+                        + "  ui.Button(text: \"Add\", onClick: action app.IncrementAction {})\n"
+                        + "}",
+                "final", true)));
         check(booleanField(object(result), "accepted"),
-                "minimal child insertion must produce a checked canonical revision");
+                "minimal container subtree replacement must produce a checked canonical revision");
         check(stringField(object(result), "dealUi").contains("UndoAction"),
                 "accepted Deal UI must contain the new binding");
     }
@@ -830,6 +833,11 @@ public final class CanonicalRefinementSessionTest {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Make the title more prominent", 4, 1);
         String initial = session.nextRequestJson();
+        check(initial.contains("replaceSubtree")
+                        && !initial.contains("setProperty")
+                        && !initial.contains("replaceViewBody")
+                        && !initial.contains("insertChild"),
+                "the UI inspect surface must allow only one-node subtree replacement");
         String text = uiNodeAlias(initial, "ui.Text");
         String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of(text),
