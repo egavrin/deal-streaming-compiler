@@ -156,6 +156,7 @@ public final class CanonicalRefinementSession {
     private final String instruction;
     private final boolean generation;
     private final List<Map<String, Object>> transcript = new ArrayList<>();
+    private final Set<String> unchangedArtifacts = new LinkedHashSet<>();
     private String deal;
     private String dealUi;
     private CanonicalCompiler.Inspection inspection;
@@ -339,6 +340,7 @@ public final class CanonicalRefinementSession {
             case "replace_deal_ui_view" -> replaceDealUiView(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
+            case "artifact_unchanged" -> artifactUnchanged(arguments);
             case "unchanged" -> unchanged();
             default -> throw new IllegalArgumentException("Unsupported streaming-compiler tool: " + name);
         }
@@ -479,9 +481,15 @@ public final class CanonicalRefinementSession {
             result.add(transactionTool(
                     "apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations, generation));
         }
-        if (!repairing && forcedArtifact.isEmpty()) {
-            result.add(tool("unchanged", "The requested change is already present or needs no source edit.",
-                    objectSchema(Map.of("reason", Map.of("type", "string")))));
+        if (!generation && !repairing && !forcedArtifact.isEmpty() && writeUnlocked) {
+            result.add(tool("artifact_unchanged",
+                    "Report that the inspected artifact needs no edit. This is valid only after inspecting compiler-owned evidence; it advances to the other artifact.",
+                    objectSchema(Map.of(
+                            "artifact", constantString(forcedArtifact),
+                            "evidenceTargets", Map.of(
+                                    "type", "array", "minItems", 1, "uniqueItems", true,
+                                    "items", enumSchema(List.copyOf(queriedAliases))),
+                            "reason", Map.of("type", "string")))));
         }
         return List.copyOf(result);
     }
@@ -572,8 +580,9 @@ public final class CanonicalRefinementSession {
 
     private List<Map<String, Object>> inspectChangeTools() {
         List<String> artifacts = new ArrayList<>();
-        if (!forcedArtifact.equals("dealui")) artifacts.add("deal");
-        if (!forcedArtifact.equals("deal") && inspection.dealUi() != null) artifacts.add("dealui");
+        if (!forcedArtifact.equals("dealui") && !unchangedArtifacts.contains("deal")) artifacts.add("deal");
+        if (!forcedArtifact.equals("deal") && inspection.dealUi() != null
+                && !unchangedArtifacts.contains("dealui")) artifacts.add("dealui");
         if (artifacts.isEmpty()) artifacts.add(forcedArtifact);
         return artifacts.stream().map(artifact -> tool(
                 artifact.equals("deal") ? "inspect_deal_change" : "inspect_deal_ui_change",
@@ -1472,6 +1481,27 @@ public final class CanonicalRefinementSession {
             throw new IllegalArgumentException("unchanged is unavailable while a compiler repair is required");
         }
         status = Status.COMPLETE;
+    }
+
+    private void artifactUnchanged(CanonicalJson.Obj arguments) {
+        String artifact = string(arguments, "artifact");
+        if (!artifact.equals(forcedArtifact) || queriedAliases.isEmpty()) {
+            throw new IllegalArgumentException("artifact_unchanged requires an inspected active artifact");
+        }
+        List<String> evidence = stringArray(arguments, "evidenceTargets");
+        if (evidence.stream().anyMatch(value -> !queriedAliases.contains(value))) {
+            throw new IllegalArgumentException("unchanged evidence must come from the inspected dependency cone");
+        }
+        unchangedArtifacts.add(artifact);
+        addTranscript("artifact_unchanged", Map.of(
+                "artifact", artifact,
+                "evidenceTargets", evidence,
+                "reason", string(arguments, "reason")));
+        forcedArtifact = "";
+        resetSurface();
+        boolean allInspected = unchangedArtifacts.contains("deal")
+                && (inspection.dealUi() == null || unchangedArtifacts.contains("dealui"));
+        if (allInspected) status = Status.COMPLETE;
     }
 
     private void fail(String code, String message) {

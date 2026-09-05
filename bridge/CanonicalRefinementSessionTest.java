@@ -44,6 +44,7 @@ public final class CanonicalRefinementSessionTest {
     public static void main(String[] args) {
         inspectChangeUnlocksCompilerOwnedCone();
         inspectChangeSchemaKeepsArtifactAnchorsDisjoint();
+        unchangedRequiresCompilerEvidence();
         rejectedDealBodyNarrowsRepairAndRollsForward();
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
@@ -86,6 +87,19 @@ public final class CanonicalRefinementSessionTest {
         check(!schemas.get("inspect_deal_ui_change").contains("\"S1\"")
                         && !schemas.get("inspect_deal_ui_change").contains("\"B1\""),
                 "Deal UI inspect must not admit DEAL anchors");
+    }
+
+    private static void unchangedRequiresCompilerEvidence() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Make the application clearer", 6, 1);
+        String initial = session.nextRequestJson();
+        check(!toolNames(initial).contains("unchanged") && !toolNames(initial).contains("artifact_unchanged"),
+                "a refinement must not claim no-op before compiler inspection");
+        String inspected = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(dealSymbolAlias(initial, "AppState")),
+                "requestedOperations", List.of("replaceDeclaration"))));
+        check(toolNames(inspected).contains("artifact_unchanged"),
+                "an inspected artifact may report no-op with compiler-owned evidence");
     }
 
     private static void numericStringRepairExplainsTypedUiFormatting() {
@@ -434,7 +448,7 @@ public final class CanonicalRefinementSessionTest {
                 "query and write schema must state the function-body replacement contract");
         List<String> applyTools = toolNames(applyRequest);
         check(applyTools.contains("apply_deal_changes"), "query must advance to the DEAL apply phase");
-        check(!applyRequest.contains("\"enum\":[\"" + body + "\"]"),
+        check(!applyTools.contains("query_deal_node"),
                 "the loaded body alias must not be offered for repeated querying");
         String repairRequest = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
