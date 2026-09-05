@@ -114,7 +114,9 @@ public final class CanonicalRefinementSessionTest {
     private static void greenfieldBehaviorBatchesAreCompilerBounded() {
         var session = CanonicalRefinementSession.greenfield(
                 PACK, "./ui.pack", "Create a multi-control application", 8, 2);
-        session.nextRequestJson();
+        String foundation = session.nextRequestJson();
+        check(foundation.contains("\"maxItems\":8"),
+                "foundation must admit a compact mutually dependent record group");
         String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",

@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
     private static final String AGENT_SURFACE_VERSION = "agent-surface-v4";
+    private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 2;
     private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
@@ -484,7 +485,7 @@ public final class CanonicalRefinementSession {
                     "Atomically declare supporting record types and replace the two bootstrap units.",
                     objectSchema(Map.of(
                             "supportingDeclarations", Map.of(
-                                    "type", "array", "maxItems", MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
+                                    "type", "array", "maxItems", MAX_FOUNDATION_RECORD_DECLARATIONS,
                                     "items", Map.of("type", "string", "description",
                                             "One complete unique field-only class declaration. Use int, not number, for integral fields and defaults. "
                                                     + "A record stored in an AppState array must include a stable unique id: int or key: string field for ForEach")),
@@ -1087,12 +1088,12 @@ public final class CanonicalRefinementSession {
         List<Map<String, Object>> operations = new ArrayList<>();
         CanonicalJson.Arr declarations = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
-        if (declarations.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
+        if (declarations.items().size() > MAX_FOUNDATION_RECORD_DECLARATIONS) {
             rejectAgentSurface(
                     "apply_deal_foundation",
                     "SC2001",
-                    "A bootstrap batch accepts at most " + MAX_SUPPORTING_DECLARATIONS_PER_BATCH
-                            + " supporting declarations. Merge presentation-only records or defer non-state helpers to behavior batches.");
+                    "A bootstrap batch accepts at most " + MAX_FOUNDATION_RECORD_DECLARATIONS
+                            + " mutually dependent record declarations. Merge presentation-only records or defer non-state helpers to behavior batches.");
             return;
         }
         String appStateDeclaration = string(arguments, "appStateDeclaration");
