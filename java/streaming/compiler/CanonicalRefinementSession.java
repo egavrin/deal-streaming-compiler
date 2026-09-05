@@ -32,6 +32,8 @@ import java.nio.charset.StandardCharsets;
 public final class CanonicalRefinementSession {
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 2;
+    private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
+    private static final int MAX_INITIAL_STATE_BODY_CHARS = 6_000;
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
@@ -71,10 +73,11 @@ public final class CanonicalRefinementSession {
             """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
-            compiler surface. Inspect the DEAL module and bootstrap declarations, then submit one
+            compiler surface. Submit bootstrap and bounded behavior tools directly from the current
+            compiler-owned stage; do not query declarations that the stage already publishes. Submit one
             cohesive atomic transaction. Emit exactly one write tool call; read-only queries may
             be batched. Set final=true only when behavior is complete. For a complex application,
-            set final=false, inspect the new revision, and continue with another small transaction.
+            set final=false and continue with another small transaction.
             Never return prose.
             Obey generationStage. In bootstrap, replace AppState and initialState and add any
             field-only nominal record types referenced by AppState in the same atomic ChangeSet.
@@ -84,6 +87,8 @@ public final class CanonicalRefinementSession {
             initialState, return one complete AppState value on every path. The function has no state
             parameter, so never assign through state there. Give every empty local collection an explicit
             element type, for example `let items: Item[] = [];`, before appending with its length.
+            Keep bootstrap compact. Represent recurring schedules as rules with interval and time-window
+            fields; do not materialize every future occurrence in initialState. Derive occurrences in handlers.
             In app-state or initial-state, complete only the named missing bootstrap unit. In declarations, both
             bootstrap units are committed and immutable: use only one addDeclaration operation per
             new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
@@ -127,7 +132,7 @@ public final class CanonicalRefinementSession {
 
     private static final String DEAL_UI_GENERATION_SYSTEM_PROMPT = """
             Create the complete Deal UI presentation for the supplied compiler-extracted
-            AppInterface. Inspect the bootstrap root view, then replace its body in one atomic UI
+            AppInterface. The compiler already exposes the bootstrap root view; replace its body directly in one atomic UI
             transaction and mark it final. Emit exactly one write tool call; read-only queries may
             be batched. The replacement body contains only statements inside the existing view:
             omit the view signature and outer braces. Use only operations in the current tool
@@ -453,10 +458,13 @@ public final class CanonicalRefinementSession {
             return List.copyOf(repairTools);
         }
         if (generation && generationStage().equals("bootstrap")) unlockGreenfieldFoundation();
+        if (generation && generationStage().equals("ui")) unlockGreenfieldRootView();
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
         boolean writeUnlocked = !dealGrants.isEmpty() || !dealUiGrants.isEmpty();
-        if (!repairing && !writeUnlocked) {
+        boolean generationNeedsInspect = generation
+                && (generationStage().equals("app-state") || generationStage().equals("initial-state"));
+        if (!repairing && !writeUnlocked && (!generation || generationNeedsInspect)) {
             result.addAll(inspectChangeTools());
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
@@ -465,15 +473,16 @@ public final class CanonicalRefinementSession {
                     "Atomically declare supporting record types and replace the two bootstrap units.",
                     objectSchema(Map.of(
                             "supportingDeclarations", Map.of(
-                                    "type", "array",
+                                    "type", "array", "maxItems", MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
                                     "items", Map.of("type", "string", "description",
                                             "One complete unique field-only class declaration. Use int, not number, for integral fields and defaults. "
                                                     + "A record stored in an AppState array must include a stable unique id: int or key: string field for ForEach")),
-                            "appStateDeclaration", Map.of("type", "string", "description",
+                            "appStateDeclaration", Map.of("type", "string", "maxLength", MAX_BOOTSTRAP_DECLARATION_CHARS, "description",
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
-                            "initialStateBody", Map.of("type", "string", "description",
+                            "initialStateBody", Map.of("type", "string", "maxLength", MAX_INITIAL_STATE_BODY_CHARS, "description",
                                     "Statements only; omit signature and outer braces. Return one complete AppState value on every path; initialState has no state parameter. "
-                                            + "Use int locals for integer literals and loops. Only [] array literals are supported, and every empty local array must have an explicit element type, for example `let items: Item[] = [];`")))));
+                                            + "Use int locals for integer literals and loops. Only [] array literals are supported, and every empty local array must have an explicit element type, for example `let items: Item[] = [];`. "
+                                            + "Store recurring schedule rules compactly; never enumerate every future occurrence")))));
         } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal) {
             result.add(dealBehaviorTool());
         } else if (!dealOperations.isEmpty()) {
@@ -1032,10 +1041,35 @@ public final class CanonicalRefinementSession {
         if (target != null) queryDealUiView(alias(target.id()));
     }
 
+    private void unlockGreenfieldRootView() {
+        if (inspection.dealUi() == null || !dealUiGrants.isEmpty()) return;
+        UiCompilerWorkspace.UiViewSnapshot target = inspection.dealUi().views().stream()
+                .filter(UiCompilerWorkspace.UiViewSnapshot::root)
+                .findFirst()
+                .orElseGet(() -> inspection.dealUi().views().stream().findFirst().orElse(null));
+        if (target == null) return;
+        grant(dealUiGrants, CanonicalCompiler.queryDealUiView(
+                deal, dealUi, pack, packSpecifier, target.id()).allowedOperations());
+    }
+
     private void applyDealFoundation(CanonicalJson.Obj arguments) {
         List<Map<String, Object>> operations = new ArrayList<>();
         CanonicalJson.Arr declarations = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
+        if (declarations.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
+            throw new IllegalArgumentException(
+                    "A bootstrap batch accepts at most " + MAX_SUPPORTING_DECLARATIONS_PER_BATCH
+                            + " supporting declarations");
+        }
+        String appStateDeclaration = string(arguments, "appStateDeclaration");
+        String initialStateBody = string(arguments, "initialStateBody");
+        if (appStateDeclaration.length() > MAX_BOOTSTRAP_DECLARATION_CHARS) {
+            throw new IllegalArgumentException("AppState exceeds the compact bootstrap limit");
+        }
+        if (initialStateBody.length() > MAX_INITIAL_STATE_BODY_CHARS) {
+            throw new IllegalArgumentException(
+                    "initialState exceeds the compact bootstrap limit; store rules instead of materialized occurrences");
+        }
         String module = alias(inspection.deal().moduleId());
         for (CanonicalJson.Value value : declarations.items()) {
             if (!(value instanceof CanonicalJson.Str declaration)) {
@@ -1049,11 +1083,11 @@ public final class CanonicalRefinementSession {
         operations.add(Map.of(
                 "operation", DealCompilerWorkspace.REPLACE_DECLARATION,
                 "target", symbolAlias("AppState"),
-                "declaration", string(arguments, "appStateDeclaration")));
+                "declaration", appStateDeclaration));
         operations.add(Map.of(
                 "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
                 "target", nodeAliases("initialState").get(0),
-                "body", string(arguments, "initialStateBody")));
+                "body", initialStateBody));
         CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
                         "operations", operations,

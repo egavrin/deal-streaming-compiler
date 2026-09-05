@@ -208,7 +208,7 @@ public final class CanonicalRefinementSessionTest {
                 "an optional rejected declaration must be patchable or droppable");
         String ui = session.acceptToolCallJson("drop_repair_slot", CompilerProtocolJson.encode(Map.of(
                 "slot", "R1", "reason", "The placeholder is not required by the requested behavior")));
-        check(toolNames(ui).contains("inspect_deal_ui_change")
+        check(toolNames(ui).contains("apply_deal_ui_changes")
                         && ui.contains("IncrementAction")
                         && !ui.contains("placeholder(state"),
                 "dropping the optional slot must preserve the accepted action and handler and advance to UI: " + ui);
@@ -345,8 +345,9 @@ public final class CanonicalRefinementSessionTest {
                 CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
         check(stringField(input, "requiredArtifact").equals("deal"),
                 "final=false must keep complex greenfield generation in DEAL");
-        check(toolNames(next).contains("inspect_deal_change"),
-                "the next DEAL revision must expose a fresh compiler surface");
+        check(toolNames(next).contains("append_deal_behavior")
+                        && !toolNames(next).contains("inspect_deal_change"),
+                "the compiler-owned declarations stage must expose its bounded write directly");
         check(!toolNames(next).contains("query_deal_symbol"),
                 "completed bootstrap declarations must become read-only index entries");
         check(!toolNames(next).contains("query_deal_node"),
@@ -375,8 +376,9 @@ public final class CanonicalRefinementSessionTest {
                 "a checked reachable action must unlock the source-free transition to Deal UI");
         String ui = session.acceptToolCallJson(
                 "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
-        check(toolNames(ui).contains("inspect_deal_ui_change"),
-                "finish_deal must expose Deal UI without another DEAL mutation");
+        check(toolNames(ui).contains("apply_deal_ui_changes")
+                        && !toolNames(ui).contains("inspect_deal_ui_change"),
+                "finish_deal must expose the compiler-owned root UI edit directly");
     }
 
     private static void greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState() {
