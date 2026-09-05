@@ -61,6 +61,7 @@ public final class CanonicalRefinementSessionTest {
         greenfieldFinalFalseKeepsBuildingDeal();
         acceptedChangeSetResetsTheLocalRepairBudget();
         greenfieldNoOpBecomesScopedRepair();
+        refinementNoOpWritesBecomeScopedRepair();
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
@@ -510,6 +511,39 @@ public final class CanonicalRefinementSessionTest {
         CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repair), "semanticRepairs");
         check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
                 "a no-op must consume the current ChangeSet repair budget");
+    }
+
+    private static void refinementNoOpWritesBecomeScopedRepair() {
+        var dealSession = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Improve scoring", 4, 2);
+        String initial = dealSession.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        dealSession.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(appState),
+                "requestedOperations", List.of("replaceDeclaration"))));
+        String dealRepair = dealSession.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+                "operation", "replaceDeclaration",
+                "declaration", "export class AppState { title: string = \"Ready\"; count: int = 0; }"), true));
+        check(dealRepair.contains("\"tools\""), "DEAL no-op must remain repairable: " + dealRepair);
+        check(toolNames(dealRepair).contains("apply_deal_changes") && dealRepair.contains("SC1002")
+                        && dealRepair.contains("Must differ from the compiler-rejected previous value"),
+                "a final refinement write with unchanged DEAL source must become scoped repair: " + dealRepair);
+
+        var uiSession = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Improve the title", 4, 2);
+        String uiInitial = uiSession.nextRequestJson();
+        String text = uiNodeAlias(uiInitial, "ui.Text");
+        uiSession.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(text),
+                "requestedOperations", List.of("setProperty"))));
+        String uiRepair = uiSession.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
+                "operation", "setProperty",
+                "property", "value",
+                "expression", "state.title"), true));
+        check(uiRepair.contains("\"tools\""), "Deal UI no-op must remain repairable: " + uiRepair);
+        check(toolNames(uiRepair).contains("apply_deal_ui_changes") && uiRepair.contains("SC1002")
+                        && uiRepair.contains("Must differ from the compiler-rejected previous value"),
+                "a final refinement write with unchanged Deal UI source must become scoped repair");
     }
 
     private static void duplicateGreenfieldDeclarationsCanOnlyFinishDeal() {

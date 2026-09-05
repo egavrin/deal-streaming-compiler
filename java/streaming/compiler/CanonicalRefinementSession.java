@@ -1007,7 +1007,7 @@ public final class CanonicalRefinementSession {
             return;
         }
         boolean sourceChanged = !result.sourceDigest().equals(beforeDigest);
-        if (generation && !sourceChanged && !finalChange) {
+        if (!sourceChanged) {
             SemanticId owner = operations.get(0).targetId();
             List<RepairScope> scopes = operations.stream()
                     .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
@@ -1016,10 +1016,10 @@ public final class CanonicalRefinementSession {
             reject("apply_deal_changes", List.of(new StructuredDiagnostic(
                     "SC1002",
                     "error",
-                    "The accepted transaction made no source progress; change the operation or finish DEAL",
+                    "The accepted transaction made no source progress; submit a changed payload or use artifact_unchanged after compiler inspection",
                     null,
                     owner,
-                    "a source-changing operation or final=true",
+                    "a source-changing operation",
                     "unchanged source",
                     operations.stream().map(DealCompilerWorkspace.Operation::targetId).distinct().toList(),
                     scopes,
@@ -1278,6 +1278,7 @@ public final class CanonicalRefinementSession {
         List<UiCompilerWorkspace.Operation> operations = dealUiOperations(field(arguments, "operations"));
         if (rejectRepeatedAttempt("dealui", operations)) return;
         boolean finalChange = booleanField(arguments, "final");
+        String beforeDigest = inspection.dealUi().sourceDigest();
         var precondition = new ChangeSetPrecondition(
                 inspection.dealUi().sourceDigest(), fingerprints(dealUiGrants));
         var result = CanonicalCompiler.applyDealUiChangeChecked(
@@ -1300,6 +1301,25 @@ public final class CanonicalRefinementSession {
                 return;
             }
             reject("apply_deal_ui_changes", result.diagnostics(), "dealui", operations);
+            return;
+        }
+        if (result.sourceDigest().equals(beforeDigest)) {
+            SemanticId owner = operations.get(0).targetId();
+            List<RepairScope> scopes = operations.stream()
+                    .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
+                    .distinct()
+                    .toList();
+            reject("apply_deal_ui_changes", List.of(new StructuredDiagnostic(
+                    "SC1002",
+                    "error",
+                    "The accepted transaction made no source progress; submit a changed payload or use artifact_unchanged after compiler inspection",
+                    null,
+                    owner,
+                    "a source-changing operation",
+                    "unchanged source",
+                    operations.stream().map(UiCompilerWorkspace.Operation::targetId).distinct().toList(),
+                    scopes,
+                    "queryDealUiNode(" + owner.value() + ")")), "dealui", operations);
             return;
         }
         dealUi = result.source();
