@@ -267,12 +267,17 @@ public final class CanonicalRefinementSessionTest {
                 "final", true)));
         check(toolNames(repair).containsAll(List.of("patch_repair_slot", "drop_repair_slot")),
                 "an optional rejected declaration must be patchable or droppable");
-        String ui = session.acceptToolCallJson("drop_repair_slot", CompilerProtocolJson.encode(Map.of(
+        String completionAudit = session.acceptToolCallJson("drop_repair_slot", CompilerProtocolJson.encode(Map.of(
                 "slot", "R1", "reason", "The placeholder is not required by the requested behavior")));
-        check(toolNames(ui).contains("apply_deal_ui_changes")
-                        && ui.contains("IncrementAction")
-                        && !ui.contains("placeholder(state"),
-                "dropping the optional slot must preserve the accepted action and handler and advance to UI: " + ui);
+        check(toolNames(completionAudit).contains("finish_deal")
+                        && completionAudit.contains("IncrementAction")
+                        && !completionAudit.contains("placeholder(state"),
+                "dropping the optional slot must preserve accepted behavior for completion audit: " + completionAudit);
+        String ui = session.acceptToolCallJson("finish_deal", CompilerProtocolJson.encode(Map.of(
+                "coveredActions", List.of("IncrementAction"),
+                "reason", "IncrementAction covers the requested counter interaction")));
+        check(toolNames(ui).contains("apply_deal_ui_changes"),
+                "audited behavior must advance to Deal UI");
     }
 
     private static void inspectChangeUnlocksCompilerOwnedCone() {
@@ -346,12 +351,18 @@ public final class CanonicalRefinementSessionTest {
                 "a non-final behavior batch must commit and expose another compact behavior surface");
         check(moreBehavior.contains("IncrementAction") && moreBehavior.contains("increment"),
                 "the next surface must inspect the committed behavior without asking the model to resend it");
-        String dealAccepted = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+        String completionAudit = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class ResetAction {}",
                         "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {count: 0}; }")),
                 "final", true)));
+        check(toolNames(completionAudit).contains("finish_deal")
+                        && !toolNames(completionAudit).contains("apply_deal_ui_changes"),
+                "a bounded behavior write must enter an explicit completion audit");
+        String dealAccepted = session.acceptToolCallJson("finish_deal", CompilerProtocolJson.encode(Map.of(
+                "coveredActions", List.of("IncrementAction", "ResetAction"),
+                "reason", "IncrementAction and ResetAction cover both requested controls")));
         CanonicalJson.Obj dealAcceptedInput = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(stringField(object(dealAccepted), "input")), "input");
         check(stringField(dealAcceptedInput, "requiredArtifact").equals("dealui"),
@@ -436,7 +447,9 @@ public final class CanonicalRefinementSessionTest {
         check(toolNames(withBehavior).contains("finish_deal"),
                 "a checked reachable action must unlock the source-free transition to Deal UI");
         String ui = session.acceptToolCallJson(
-                "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
+                "finish_deal", CompilerProtocolJson.encode(Map.of(
+                        "coveredActions", List.of("IncrementAction"),
+                        "reason", "IncrementAction covers the requested interaction")));
         check(toolNames(ui).contains("apply_deal_ui_changes")
                         && !toolNames(ui).contains("inspect_deal_ui_change"),
                 "finish_deal must expose the compiler-owned root UI edit directly");

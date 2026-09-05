@@ -357,7 +357,7 @@ public final class CanonicalRefinementSession {
             case "add_deal_action_handler" -> addDealActionHandler(arguments);
             case "add_deal_supporting_declaration" -> addDealSupportingDeclaration(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
-            case "finish_deal" -> finishDeal();
+            case "finish_deal" -> finishDeal(arguments);
             case "replace_deal_ui_view" -> replaceDealUiView(arguments);
             case "replace_deal_ui_subtree" -> replaceDealUiSubtree(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
@@ -506,13 +506,25 @@ public final class CanonicalRefinementSession {
         }
         if (generation && generationStage().equals("declarations")
                 && !inspection.deal().appInterface().actions().isEmpty()) {
+            List<String> actionNames = inspection.deal().appInterface().actions().stream()
+                    .map(CompilerProtocol.TypeSnapshot::name)
+                    .sorted()
+                    .toList();
             result.add(tool("finish_deal",
                     repairMustFinishDeal
                             ? "All rejected declarations already exist. Drop the duplicate ChangeSet and transition to Deal UI."
                             : "Current checked DEAL behavior satisfies every requested interaction. Transition to Deal UI without changing source.",
-                    objectSchema(Map.of("reason", Map.of(
-                            "type", "string",
-                            "description", "Briefly name the accepted actions that satisfy the requested interactions")))));
+                    objectSchema(Map.of(
+                            "coveredActions", Map.of(
+                                    "type", "array",
+                                    "minItems", actionNames.size(),
+                                    "maxItems", actionNames.size(),
+                                    "uniqueItems", true,
+                                    "items", enumSchema(actionNames),
+                                    "description", "Every currently accepted action. Re-read the original request before claiming this set is complete."),
+                            "reason", Map.of(
+                                    "type", "string",
+                                    "description", "Map the concrete requested interactions to the accepted actions; if any requirement lacks evidence, add it instead of finishing")))));
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
         List<OperationDescriptor> replaceViewGrants = dealUiGrants.values().stream()
@@ -554,7 +566,7 @@ public final class CanonicalRefinementSession {
                         "description", "Exactly one complete export function for that Action. Put // @ui-update on the line immediately before export function")));
         return tool(
                 "append_deal_behavior",
-                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Set final=false when another bounded behavior batch is required, then set final=true on the last batch.",
+                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Completion is a separate compiler-owned finish_deal step after this bounded batch.",
                 objectSchema(Map.of(
                         "supportingDeclarations", Map.of(
                                 "type", "array", "maxItems", MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
@@ -566,7 +578,8 @@ public final class CanonicalRefinementSession {
                                 "items", actionHandler),
                         "final", Map.of(
                                 "type", "boolean",
-                                "description", "False commits this batch and requests another compact behavior surface; true completes DEAL and advances to Deal UI"))));
+                                "const", false,
+                                "description", "Always false. The next compact surface audits request coverage before finish_deal"))));
     }
 
     private Map<String, Object> dealActionHandlerTool() {
@@ -1172,7 +1185,7 @@ public final class CanonicalRefinementSession {
         CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
                         "operations", operations,
-                        "final", booleanField(arguments, "final")))),
+                        "final", false))),
                 "behavior transaction");
         applyDeal(transaction);
     }
@@ -1260,12 +1273,29 @@ public final class CanonicalRefinementSession {
                                 symbol.id().equals(node.ownerId()) && symbol.name().equals("initialState")));
     }
 
-    private void finishDeal() {
+    private void finishDeal(CanonicalJson.Obj arguments) {
         if (!generation || !generationStage().equals("declarations") || !dealIsValid()) {
             throw new IllegalArgumentException("finish_deal requires valid generated DEAL after bootstrap");
         }
         if (inspection.deal().appInterface().actions().isEmpty()) {
             throw new IllegalArgumentException("finish_deal requires at least one reachable action for a generated mini-application");
+        }
+        Set<String> availableActions = inspection.deal().appInterface().actions().stream()
+                .map(CompilerProtocol.TypeSnapshot::name)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        CanonicalJson.Arr covered = CompilerProtocolJson.requireArray(
+                field(arguments, "coveredActions"), "coveredActions");
+        Set<String> coveredActions = covered.items().stream()
+                .map(value -> {
+                    if (!(value instanceof CanonicalJson.Str action)) {
+                        throw new IllegalArgumentException("coveredActions must contain action names");
+                    }
+                    return action.value();
+                })
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!coveredActions.equals(availableActions)) {
+            throw new IllegalArgumentException(
+                    "finish_deal must account for every accepted action; expected " + availableActions);
         }
         forcedArtifact = "dealui";
         repairScopes = List.of();
