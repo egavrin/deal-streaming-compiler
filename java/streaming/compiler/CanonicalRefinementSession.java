@@ -454,7 +454,8 @@ public final class CanonicalRefinementSession {
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
         if (!uiOperations.isEmpty()) {
-            result.add(transactionTool("apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations));
+            result.add(transactionTool(
+                    "apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations, generation));
         }
         if (!repairing && forcedArtifact.isEmpty()) {
             result.add(tool("unchanged", "The requested change is already present or needs no source edit.",
@@ -482,7 +483,7 @@ public final class CanonicalRefinementSession {
                         "actionHandlers", Map.of(
                                 "type", "array", "minItems", 1,
                                 "items", actionHandler),
-                        "final", Map.of("type", "boolean"))));
+                        "final", Map.of("type", "boolean", "const", true))));
     }
 
     private void unlockGreenfieldFoundation() {
@@ -1722,11 +1723,21 @@ public final class CanonicalRefinementSession {
 
     private static Map<String, Object> transactionTool(
             String name, String description, List<Map<String, Object>> variants) {
+        return transactionTool(name, description, variants, false);
+    }
+
+    private static Map<String, Object> transactionTool(
+            String name,
+            String description,
+            List<Map<String, Object>> variants,
+            boolean finalRequired) {
         List<Map<String, Object>> compactVariants = omitUnambiguousTargets(variants);
         return tool(name, description, objectSchema(Map.of(
                 "operations", Map.of("type", "array", "minItems", 1,
                         "items", Map.of("anyOf", compactVariants)),
-                "final", Map.of("type", "boolean"))));
+                "final", finalRequired
+                        ? Map.of("type", "boolean", "const", true)
+                        : Map.of("type", "boolean"))));
     }
 
     @SuppressWarnings("unchecked")
