@@ -97,8 +97,9 @@ public final class CanonicalRefinementSessionTest {
                 "greenfield generation must start with DEAL");
         check(!toolNames(initial).contains("query_deal_ui_view"),
                 "Deal UI must stay hidden until DEAL is accepted");
-        check(toolNames(initial).contains("inspect_change"),
-                "greenfield bootstrap must expose compiler-owned change inspection");
+        check(toolNames(initial).contains("apply_deal_foundation")
+                        && !toolNames(initial).contains("inspect_change"),
+                "greenfield bootstrap must expose compiler-owned foundation slots directly");
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);

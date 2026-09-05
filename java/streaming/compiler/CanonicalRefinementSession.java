@@ -416,6 +416,7 @@ public final class CanonicalRefinementSession {
 
     private List<Map<String, Object>> tools() {
         if (repairWorkspace != null) return List.of(repairSlotTool());
+        if (generation && generationStage().equals("bootstrap")) unlockGreenfieldFoundation();
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
         boolean writeUnlocked = !dealGrants.isEmpty() || !dealUiGrants.isEmpty();
@@ -460,6 +461,23 @@ public final class CanonicalRefinementSession {
                     objectSchema(Map.of("reason", Map.of("type", "string")))));
         }
         return List.copyOf(result);
+    }
+
+    private void unlockGreenfieldFoundation() {
+        SemanticId module = inspection.deal().moduleId();
+        SemanticId appState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("AppState"))
+                .map(SymbolSnapshot::id).findFirst().orElseThrow();
+        SemanticId initialBody = inspection.deal().nodes().stream()
+                .filter(node -> inspection.deal().symbols().stream().anyMatch(symbol ->
+                        symbol.id().equals(node.ownerId()) && symbol.name().equals("initialState")))
+                .map(node -> node.id()).findFirst().orElseThrow();
+        grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
+        grant(dealGrants, CanonicalCompiler.queryDealSymbol(deal, appState).allowedOperations());
+        grant(dealGrants, CanonicalCompiler.queryDealNode(deal, initialBody).allowedOperations());
+        queriedAliases.add(alias(module));
+        queriedAliases.add(alias(appState));
+        queriedAliases.add(alias(initialBody));
     }
 
     private Map<String, Object> inspectChangeTool() {
