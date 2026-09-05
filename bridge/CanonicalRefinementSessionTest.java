@@ -347,13 +347,15 @@ public final class CanonicalRefinementSessionTest {
                 "supportingDeclarations", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"Ready\"; count: int = 0; paused: boolean = false; }",
                 "initialStateBody", "return {title: \"Ready\", count: 0, paused: false};",
+                "capabilities", List.of("clock.frame"),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class TogglePauseAction {}",
                         "handlerDeclaration", "// @ui-update\nexport function togglePause(state: AppState, action: TogglePauseAction): AppState { return {title: state.title, count: state.count, paused: !state.paused}; }")),
                 "final", true)));
         check(stringField(object(next), "input").contains("TogglePauseAction")
-                        && stringField(object(next), "input").contains("paused"),
-                "the compiler must commit the complete state schema group and continue from its new interface");
+                        && stringField(object(next), "input").contains("paused")
+                        && stringField(object(next), "input").contains("clock.frame"),
+                "the compiler must commit state, actions, and host capabilities as one interface evolution: " + next);
     }
 
     private static void greenfieldBuildsDealBeforeDealUi() {

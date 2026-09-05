@@ -36,6 +36,9 @@ public final class CanonicalRefinementSession {
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
     private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
     private static final int MAX_INITIAL_STATE_BODY_CHARS = 6_000;
+    private static final List<String> HOST_CAPABILITIES = List.of(
+            "clock.minute", "clock.frame", "pointer", "keyboard", "storage.private",
+            "notifications", "camera.capture", "vision.ocr", "health.read", "focus.control");
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
@@ -492,6 +495,10 @@ public final class CanonicalRefinementSession {
                                                     + "A record stored in an AppState array must include a stable unique id: int or key: string field for ForEach")),
                             "appStateDeclaration", Map.of("type", "string", "maxLength", MAX_BOOTSTRAP_DECLARATION_CHARS, "description",
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
+                            "capabilities", Map.of(
+                                    "type", "array", "uniqueItems", true, "maxItems", HOST_CAPABILITIES.size(),
+                                    "items", enumSchema(HOST_CAPABILITIES),
+                                    "description", "Complete set of host capabilities required by this application"),
                             "initialStateBody", Map.of("type", "string", "maxLength", MAX_INITIAL_STATE_BODY_CHARS, "description",
                                     "Statements only; omit signature and outer braces. Return one complete AppState value on every path; initialState has no state parameter. "
                                             + "Use int locals for integer literals and loops. Only [] array literals are supported, and every empty local array must have an explicit element type, for example `let items: Item[] = [];`. "
@@ -608,6 +615,12 @@ public final class CanonicalRefinementSession {
                         "actionHandlers", Map.of(
                                 "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
                                 "type", "array", "items", actionHandlerSchema()),
+                        "capabilities", Map.of(
+                                "type", "array",
+                                "uniqueItems", true,
+                                "maxItems", HOST_CAPABILITIES.size(),
+                                "items", enumSchema(HOST_CAPABILITIES),
+                                "description", "Complete host capability set after this change. Preserve existing entries and add only capabilities required by the instruction"),
                         "final", Map.of(
                                 "type", "boolean", "const", true,
                                 "description", "Always true. Additional behavior belongs to a later compiler-mediated refinement"))));
@@ -730,7 +743,8 @@ public final class CanonicalRefinementSession {
                     DealCompilerWorkspace.REMOVE_DECLARATION,
                     DealCompilerWorkspace.REPLACE_DECLARATION,
                     DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
-                    DealCompilerWorkspace.REPLACE_BLOCK_BODY));
+                    DealCompilerWorkspace.REPLACE_BLOCK_BODY,
+                    DealCompilerWorkspace.SET_CAPABILITIES));
         } else {
             targets.addAll(aliases("D"));
             targets.addAll(aliases("V"));
@@ -844,6 +858,11 @@ public final class CanonicalRefinementSession {
                         Map.of("body", editableStringSchema(
                                 "Statements only; omit declaration signature and outer braces",
                                 grant.operation(), grant.targetId(), "body"));
+                case DealCompilerWorkspace.SET_CAPABILITIES -> Map.of(
+                        "capabilities", Map.of(
+                                "type", "array", "uniqueItems", true,
+                                "maxItems", HOST_CAPABILITIES.size(),
+                                "items", enumSchema(HOST_CAPABILITIES)));
                 default -> Map.of();
             };
             addIfAllowed(operations, grant.operation(), grant.targetId(), extra);
@@ -853,6 +872,7 @@ public final class CanonicalRefinementSession {
 
     private boolean allowedGreenfieldDealOperation(OperationDescriptor grant) {
         if (grant.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) return true;
+        if (grant.operation().equals(DealCompilerWorkspace.SET_CAPABILITIES)) return !appStateBootstrapReplaced;
         if (grant.operation().equals(DealCompilerWorkspace.REPLACE_DECLARATION)) {
             return !appStateBootstrapReplaced && inspection.deal().symbols().stream().anyMatch(symbol ->
                     symbol.id().equals(grant.targetId())
@@ -951,6 +971,7 @@ public final class CanonicalRefinementSession {
             cohesiveOperations.add(DealCompilerWorkspace.REPLACE_FUNCTION_BODY);
             if (anchors.contains(inspection.deal().moduleId())) {
                 cohesiveOperations.add(DealCompilerWorkspace.ADD_DECLARATION);
+                cohesiveOperations.add(DealCompilerWorkspace.SET_CAPABILITIES);
             }
             requestedOperations = List.copyOf(cohesiveOperations);
         }
@@ -1201,6 +1222,10 @@ public final class CanonicalRefinementSession {
                 "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
                 "target", nodeAliases("initialState").get(0),
                 "body", initialStateBody));
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.SET_CAPABILITIES,
+                "target", module,
+                "capabilities", stringArrayOr(arguments, "capabilities", List.of())));
         CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
                         "operations", operations,
@@ -1294,6 +1319,11 @@ public final class CanonicalRefinementSession {
                 "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
                 "target", nodeAliases("initialState").get(0),
                 "body", string(arguments, "initialStateBody")));
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.SET_CAPABILITIES,
+                "target", module,
+                "capabilities", stringArrayOr(
+                        arguments, "capabilities", inspection.deal().appInterface().capabilities())));
         CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
                 field(arguments, "actionHandlers"), "actionHandlers");
         if (pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
@@ -1808,6 +1838,9 @@ public final class CanonicalRefinementSession {
                                 payloadKey(operationName(item), item.targetId(), "body"), item.body());
                         case DealCompilerWorkspace.ReplaceBlockBody item -> result.put(
                                 payloadKey(operationName(item), item.targetId(), "body"), item.body());
+                        case DealCompilerWorkspace.SetCapabilities item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "capabilities"),
+                                String.join("\n", item.capabilities()));
                         case DealCompilerWorkspace.RemoveDeclaration ignored -> { }
                     }
                 } else if (value instanceof UiCompilerWorkspace.Operation operation) {
@@ -1949,6 +1982,8 @@ public final class CanonicalRefinementSession {
                         target, string(operation, "body"));
                 case DealCompilerWorkspace.REPLACE_BLOCK_BODY -> new DealCompilerWorkspace.ReplaceBlockBody(
                         target, string(operation, "body"));
+                case DealCompilerWorkspace.SET_CAPABILITIES -> new DealCompilerWorkspace.SetCapabilities(
+                        target, stringArray(operation, "capabilities"));
                 default -> throw new IllegalArgumentException("Unsupported DEAL operation " + name);
             });
         }
@@ -2054,6 +2089,7 @@ public final class CanonicalRefinementSession {
             case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
             case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
             case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
+            case DealCompilerWorkspace.SetCapabilities ignored -> DealCompilerWorkspace.SET_CAPABILITIES;
         };
     }
 
@@ -2366,6 +2402,12 @@ public final class CanonicalRefinementSession {
             if (value instanceof CanonicalJson.Str text) return text.value();
             throw new IllegalArgumentException("Protocol field '" + name + "' must contain strings");
         }).toList();
+    }
+
+    private static List<String> stringArrayOr(
+            CanonicalJson.Obj object, String name, List<String> fallback) {
+        boolean present = object.entries().stream().anyMatch(entry -> entry.key().equals(name));
+        return present ? stringArray(object, name) : List.copyOf(fallback);
     }
 
     private static int integer(CanonicalJson.Obj object, String name) {

@@ -149,10 +149,27 @@ public final class CanonicalCompilerBridge {
                 case DealCompilerWorkspace.REPLACE_BLOCK_BODY ->
                         new DealCompilerWorkspace.ReplaceBlockBody(
                                 target, CompilerProtocolJson.stringField(operation, "body"));
+                case DealCompilerWorkspace.SET_CAPABILITIES ->
+                        new DealCompilerWorkspace.SetCapabilities(
+                                target, stringArray(operation, "capabilities"));
                 default -> throw new IllegalArgumentException("Unsupported DEAL operation: " + name);
             });
         }
         return List.copyOf(result);
+    }
+
+    private static List<String> stringArray(CanonicalJson.Obj object, String field) {
+        CanonicalJson.Value value = object.entries().stream()
+                .filter(entry -> entry.key().equals(field))
+                .map(CanonicalJson.Entry::value)
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Missing field: " + field));
+        return CompilerProtocolJson.requireArray(value, field).items().stream()
+                .map(item -> {
+                    if (!(item instanceof CanonicalJson.Str string)) {
+                        throw new IllegalArgumentException(field + " must contain strings");
+                    }
+                    return string.value();
+                }).toList();
     }
 
     private static List<UiCompilerWorkspace.Operation> uiOperations(String source) {
