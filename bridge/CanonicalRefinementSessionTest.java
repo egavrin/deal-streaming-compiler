@@ -64,6 +64,7 @@ public final class CanonicalRefinementSessionTest {
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
         emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
+        rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -152,6 +153,34 @@ public final class CanonicalRefinementSessionTest {
                         "let items: Item[] = []; return {title: \"Health\", items: items};"))));
         check(toolNames(repaired).contains("append_deal_behavior"),
                 "a typed local collection repair must preserve the staged bootstrap siblings");
+    }
+
+    private static void rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create an interactive counter", 8, 2);
+        session.nextRequestJson();
+        String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
+                "initialStateBody", "return {title: \"Counter\", count: 0};")));
+        check(toolNames(behavior).contains("append_deal_behavior"), "foundation must advance to behavior");
+        String repair = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(
+                        "export function placeholder(state: AppState): void { return state; }"),
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class IncrementAction {}",
+                        "handlerDeclaration", "// @ui-update\n"
+                                + "export function increment(state: AppState, action: IncrementAction): AppState { "
+                                + "return {title: state.title, count: state.count + 1}; }")),
+                "final", true)));
+        check(toolNames(repair).containsAll(List.of("patch_repair_slot", "drop_repair_slot")),
+                "an optional rejected declaration must be patchable or droppable");
+        String ui = session.acceptToolCallJson("drop_repair_slot", CompilerProtocolJson.encode(Map.of(
+                "slot", "R1", "reason", "The placeholder is not required by the requested behavior")));
+        check(toolNames(ui).contains("inspect_deal_ui_change")
+                        && ui.contains("IncrementAction")
+                        && !ui.contains("placeholder(state"),
+                "dropping the optional slot must preserve the accepted action and handler and advance to UI: " + ui);
     }
 
     private static void inspectChangeUnlocksCompilerOwnedCone() {

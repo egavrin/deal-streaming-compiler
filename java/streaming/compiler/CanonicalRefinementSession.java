@@ -343,6 +343,7 @@ public final class CanonicalRefinementSession {
             case "replace_deal_ui_view" -> replaceDealUiView(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
+            case "drop_repair_slot" -> dropRepairSlot(arguments);
             case "artifact_unchanged" -> artifactUnchanged(arguments);
             case "unchanged" -> unchanged();
             default -> throw new IllegalArgumentException("Unsupported streaming-compiler tool: " + name);
@@ -432,7 +433,22 @@ public final class CanonicalRefinementSession {
     }
 
     private List<Map<String, Object>> tools() {
-        if (repairWorkspace != null) return List.of(repairSlotTool());
+        if (repairWorkspace != null) {
+            List<Map<String, Object>> repairTools = new ArrayList<>();
+            repairTools.add(repairSlotTool());
+            RepairSlot active = activeRejectedRepairSlot();
+            if (repairArtifact.equals("deal")
+                    && active.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) {
+                repairTools.add(tool(
+                        "drop_repair_slot",
+                        "Drop this rejected addDeclaration when it is unnecessary. Preserved sibling slots remain immutable and will still be validated.",
+                        objectSchema(Map.of(
+                                "slot", constantString(active.slotId()),
+                                "reason", Map.of("type", "string", "description",
+                                        "Why this declaration is unnecessary for the requested application")))));
+            }
+            return List.copyOf(repairTools);
+        }
         if (generation && generationStage().equals("bootstrap")) unlockGreenfieldFoundation();
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
@@ -634,10 +650,7 @@ public final class CanonicalRefinementSession {
     }
 
     private Map<String, Object> repairSlotTool() {
-        List<RepairSlot> rejected = repairWorkspace.slots().stream()
-                .filter(value -> value.status() == RepairSlotStatus.REJECTED).toList();
-        if (rejected.isEmpty()) throw new IllegalStateException("Repair workspace has no rejected slot");
-        RepairSlot active = rejected.get(0);
+        RepairSlot active = activeRejectedRepairSlot();
         Set<String> fields = new LinkedHashSet<>(active.payload().keySet());
         Map<String, Object> payloadProperties = new LinkedHashMap<>();
         fields.forEach(field -> payloadProperties.put(field, switch (field) {
@@ -657,6 +670,12 @@ public final class CanonicalRefinementSession {
                 objectSchema(Map.of(
                         "slot", constantString(active.slotId()),
                         "payload", payload)));
+    }
+
+    private RepairSlot activeRejectedRepairSlot() {
+        return repairWorkspace.slots().stream()
+                .filter(value -> value.status() == RepairSlotStatus.REJECTED)
+                .findFirst().orElseThrow(() -> new IllegalStateException("Repair workspace has no rejected slot"));
     }
 
     private boolean foundationReady() {
@@ -1290,6 +1309,40 @@ public final class CanonicalRefinementSession {
         }
         if (repairArtifact.equals("deal")) completeDealRepair(result);
         else completeDealUiRepair(result);
+    }
+
+    private void dropRepairSlot(CanonicalJson.Obj arguments) {
+        if (repairWorkspace == null || !repairArtifact.equals("deal")) {
+            throw new IllegalStateException("No active DEAL repair workspace");
+        }
+        String slotId = string(arguments, "slot");
+        RepairSlot slot = activeRejectedRepairSlot();
+        if (!slot.slotId().equals(slotId)
+                || !slot.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) {
+            throw new IllegalArgumentException("Only the active rejected addDeclaration slot may be dropped");
+        }
+        string(arguments, "reason");
+        repairSlotPatches++;
+        var result = CanonicalCompiler.patchDealRepairWorkspace(
+                deal, repairWorkspace, List.of(SlotPatch.drop(slotId)));
+        if (!result.accepted()) {
+            semanticRepairs++;
+            dealSemanticRepairs++;
+            repairWorkspace = result.workspace();
+            repairDiagnostics = result.diagnostics();
+            addTranscript("drop_repair_slot", Map.of(
+                    "accepted", false,
+                    "slot", slotId,
+                    "diagnostics", compactDiagnostics(result.diagnostics())));
+            if (dealSemanticRepairs > maxSemanticRepairs) {
+                status = Status.FAILED;
+                deal = previousDeal;
+                dealUi = previousDealUi;
+            }
+            return;
+        }
+        addTranscript("drop_repair_slot", Map.of("accepted", true, "slot", slotId));
+        completeDealRepair(result);
     }
 
     private void completeDealRepair(deal.compiler.CompilerProtocol.RepairWorkspaceResult result) {
