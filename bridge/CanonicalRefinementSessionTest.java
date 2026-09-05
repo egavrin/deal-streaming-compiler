@@ -345,6 +345,24 @@ public final class CanonicalRefinementSessionTest {
                 "a stricter checked-contract rejection must remain repairable");
         check(repair.contains("UI2050"),
                 "the v2 framework diagnostic must reach the repair surface");
+        String repairInput = stringField(object(repair), "input");
+        check(repairInput.contains("\"slot\":\"R2\"")
+                        && repairInput.contains("export function run"),
+                "framework repair must expose only the rejected handler slot");
+        String repaired = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
+                "slot", "R2",
+                "payload", Map.of("declaration", """
+                        // @ui-update
+                        export function run(state: AppState, action: RunAction): AppState {
+                          return state;
+                        }
+                        """))));
+        String repairedInput = stringField(object(repaired), "input");
+        check(repairedInput.contains("\"tool\":\"patch_repair_slot\"")
+                        && repairedInput.contains("\"accepted\":true")
+                        && repairedInput.contains("RunAction")
+                        && !toolNames(repaired).contains("patch_repair_slot"),
+                "a narrow framework patch must preserve the action and close the repair workspace");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
