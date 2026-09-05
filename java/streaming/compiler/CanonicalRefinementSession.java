@@ -61,6 +61,10 @@ public final class CanonicalRefinementSession {
             replaceFunctionBody(initialState body), addDeclaration(Action), addDeclaration(handler).
             In declarations, call finish_deal as soon as the existing accepted declarations satisfy
             the request. Never resubmit an existing declaration merely to transition to Deal UI.
+            Before finish_deal, compare the original request with the accepted AppInterface. Every explicitly
+            requested user interaction, control, timer, pointer input or host effect must have a reachable nominal
+            action and a checked handler or effect. Do not finish an interactive request with zero actions. This is a
+            request-fidelity check, not permission to add scenario-specific behavior.
 
             DEAL is a mutable TypeScript-shaped subset. Use exported nominal classes, initialState,
             nominal actions ending in Action, and @ui-update handlers that return a complete new
@@ -383,8 +387,10 @@ public final class CanonicalRefinementSession {
             result.add(tool("finish_deal",
                     repairMustFinishDeal
                             ? "All rejected declarations already exist. Drop the duplicate ChangeSet and transition to Deal UI."
-                            : "Current checked DEAL behavior is complete. Transition to Deal UI without changing source.",
-                    objectSchema(Map.of("reason", Map.of("type", "string")))));
+                            : "Current checked DEAL behavior satisfies every requested interaction. Transition to Deal UI without changing source.",
+                    objectSchema(Map.of("reason", Map.of(
+                            "type", "string",
+                            "description", "Briefly name the accepted actions that satisfy the requested interactions")))));
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
         if (!uiOperations.isEmpty()) {

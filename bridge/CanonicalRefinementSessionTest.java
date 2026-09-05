@@ -110,6 +110,8 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI surface must identify the root state path: " + dealAccepted);
         check(dealAccepted.contains("ForEach(state.items, item: app.Item, key: item.id)"),
                 "the Deal UI contract must publish the exact collection syntax");
+        check(initial.contains("Do not finish an interactive request with zero actions"),
+                "the generation surface must keep request fidelity explicit at completion");
         String view = uiViewAlias(dealAccepted, "App");
         String uiWrite = session.acceptToolCallJson(
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
