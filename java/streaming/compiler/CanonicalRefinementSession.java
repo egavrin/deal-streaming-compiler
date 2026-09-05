@@ -187,6 +187,7 @@ public final class CanonicalRefinementSession {
     private int repairSlotsStaged;
     private int repairSlotsPreserved;
     private int repairSlotPatches;
+    private int repairNoProgressAttempts;
     private int maxRepairGroupWidth;
     private boolean appStateBootstrapReplaced;
     private boolean initialStateBootstrapReplaced;
@@ -1282,12 +1283,19 @@ public final class CanonicalRefinementSession {
             payload.put("newParentId", resolveAlias(payload.get("newParentId"), "U").value());
         }
         if (payload.equals(slot.payload())) {
+            repairNoProgressAttempts++;
             addTranscript("compiler_no_progress", Map.of(
                     "artifact", repairArtifact,
                     "slot", slotId,
-                    "payloadFingerprint", slot.payloadFingerprint()));
+                    "payloadFingerprint", slot.payloadFingerprint(),
+                    "attempt", repairNoProgressAttempts,
+                    "instruction", "The payload is byte-identical to the rejected slot. Submit a changed, smaller correction."));
+            if (repairNoProgressAttempts >= 2) {
+                fail("SC1002", "repair made no progress twice for compiler-owned slot " + slotId);
+            }
             return;
         }
+        repairNoProgressAttempts = 0;
         var patch = new SlotPatch(slotId, payload);
         repairSlotPatches++;
         var result = repairArtifact.equals("deal")
@@ -1383,6 +1391,7 @@ public final class CanonicalRefinementSession {
 
     private void clearRepairWorkspace() {
         repairWorkspace = null;
+        repairNoProgressAttempts = 0;
         repairArtifact = "";
         repairFinal = false;
         repairReplacesAppState = false;
