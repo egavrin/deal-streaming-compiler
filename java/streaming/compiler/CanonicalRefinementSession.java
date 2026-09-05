@@ -38,6 +38,24 @@ public final class CanonicalRefinementSession {
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             """.strip();
+    private static final String DEAL_EDIT_CONTRACT = """
+
+            Active artifact: DEAL. DEAL is a mutable TypeScript-shaped subset, not full TypeScript.
+            Classes are field-only nominal records with typed defaulted fields; constructors, methods,
+            parameter properties, interfaces and the new operator are invalid. Use int for integral values.
+            Only [] array literals are valid; append to fresh arrays with items[items.length] = value.
+            Do not use const, var, arrow functions, ternaries, switch, ++, compound assignment or JS methods.
+            Every action handler declaration must literally start with // @ui-update on the line immediately
+            before export function, take (state: AppState, action: SomeAction), and return a complete AppState.
+            Mutation is allowed only on fresh locals; state and action parameters are borrowed.
+            """;
+    private static final String DEAL_UI_EDIT_CONTRACT = """
+
+            Active artifact: Deal UI. It is declarative and read-only: no indexing, array/object literals,
+            assignment, arbitrary calls, length, methods, coercion or ternaries. Render dynamic collections
+            only with ForEach(state.items, item: app.Item, key: item.id) { ... }. Use only compiler-published
+            components, state paths, action constructors and tokens. A view body has exactly one root node.
+            """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
             compiler surface. Query the DEAL module and bootstrap declarations, then submit one
@@ -225,16 +243,23 @@ public final class CanonicalRefinementSession {
         request.put("revision", Map.of(
                 "deal", inspection.deal().sourceDigest(),
                 "dealUi", inspection.dealUi() == null ? "" : inspection.dealUi().sourceDigest()));
-        request.put("instructions", generation
-                ? forcedArtifact.equals("dealui")
-                        ? DEAL_UI_GENERATION_SYSTEM_PROMPT
-                        : DEAL_GENERATION_SYSTEM_PROMPT
-                : REFINEMENT_SYSTEM_PROMPT);
+        request.put("instructions", instructions());
         request.put("input", input);
         request.put("tools", tools);
         request.put("round", rounds + 1);
         request.put("semanticRepairs", semanticRepairs);
         return CompilerProtocolJson.encode(request);
+    }
+
+    private String instructions() {
+        if (generation) {
+            return forcedArtifact.equals("dealui")
+                    ? DEAL_UI_GENERATION_SYSTEM_PROMPT
+                    : DEAL_GENERATION_SYSTEM_PROMPT;
+        }
+        if (forcedArtifact.equals("deal")) return REFINEMENT_SYSTEM_PROMPT + DEAL_EDIT_CONTRACT;
+        if (forcedArtifact.equals("dealui")) return REFINEMENT_SYSTEM_PROMPT + DEAL_UI_EDIT_CONTRACT;
+        return REFINEMENT_SYSTEM_PROMPT;
     }
 
     public String acceptToolCallJson(String name, String argumentsJson) {

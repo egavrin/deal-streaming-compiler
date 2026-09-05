@@ -435,7 +435,10 @@ public final class CanonicalRefinementSessionTest {
 
     private static void interfaceChangeAutomaticallyUnlocksRootView() {
         var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Add reset behavior", 3, 1);
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        String dealEdit = session.acceptToolCallJson(
+                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+        check(dealEdit.contains("constructors, methods"),
+                "a DEAL edit surface must publish the relevant language subset");
         String request = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
                 Map.of("operation", "addDeclaration", "target", "M1",
                         "declaration", "export class ResetAction {}"),
@@ -448,6 +451,8 @@ public final class CanonicalRefinementSessionTest {
                 "interface repair must not require another model-selected inspection round");
         check(request.contains("ui.Column"),
                 "the edit surface must contain the compiler-owned root view slice");
+        check(request.contains("declarative and read-only"),
+                "an automatically opened UI edit must publish the Deal UI contract");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
