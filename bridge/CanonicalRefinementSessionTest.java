@@ -51,8 +51,9 @@ public final class CanonicalRefinementSessionTest {
         writePhaseHidesAllQueryTools();
         dealBodyInspectionCanAddSiblingDeclarations();
         rawDeclarationInsertionIsHiddenBehindSemanticTools();
-        interfaceChangeAutomaticallyUnlocksRootView();
-        interfaceChangeUsesAtomicRootViewReplacement();
+        interfaceChangeRequestsMinimalUiInspection();
+        interfaceChangeUsesMinimalChildInsertion();
+        subtreeReplacementPreservesUnrelatedSiblings();
         uiOnlyChangeNeverTouchesDeal();
         uiViewQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -658,7 +659,7 @@ public final class CanonicalRefinementSessionTest {
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
     }
 
-    private static void interfaceChangeUsesAtomicRootViewReplacement() {
+    private static void interfaceChangeUsesMinimalChildInsertion() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Add an undo action and control", 6, 2);
         String initial = session.nextRequestJson();
@@ -670,18 +671,49 @@ public final class CanonicalRefinementSessionTest {
                 "actionDeclaration", "export class UndoAction {}",
                 "handlerDeclaration", "// @ui-update\nexport function undo(state: AppState, action: UndoAction): AppState { return {title: state.title, count: state.count}; }",
                 "final", true)));
-        check(toolNames(uiRequest).contains("replace_deal_ui_view"),
-                "an interface change must expose one semantic root-view replacement tool");
-        check(!uiRequest.contains("\"const\":\"removeView\""),
-                "the compact surface must not allow deleting the canonical root view");
-        String result = session.acceptToolCallJson("replace_deal_ui_view", CompilerProtocolJson.encode(Map.of(
-                "target", uiViewAlias(uiRequest, "App"),
-                "body", "ui.Column() { ui.Text(value: state.title) ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) ui.Button(text: \"Undo\", onClick: action app.UndoAction {}) }",
-                "final", true)));
+        check(toolNames(uiRequest).contains("inspect_deal_ui_change"),
+                "an interface change must ask the model to identify the minimal affected UI cone");
+        check(!toolNames(uiRequest).contains("replace_deal_ui_view"),
+                "an interface change must not automatically unlock a whole-view rewrite");
+        String column = uiNodeAlias(uiRequest, "ui.Column");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(column),
+                "requestedOperations", List.of("insertChild"))));
+        check(toolNames(write).contains("apply_deal_ui_changes") && write.contains("insertChild"),
+                "an unreachable new action must expose insertion into an inspected container");
+        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
+                "operation", "insertChild",
+                "target", column,
+                "index", 2,
+                "source", "ui.Button(text: \"Undo\", onClick: action app.UndoAction {})"), true));
         check(booleanField(object(result), "accepted"),
-                "atomic root-view replacement must produce a checked canonical revision");
+                "minimal child insertion must produce a checked canonical revision");
         check(stringField(object(result), "dealUi").contains("UndoAction"),
                 "accepted Deal UI must contain the new binding");
+    }
+
+    private static void subtreeReplacementPreservesUnrelatedSiblings() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Make the title concise", 4, 1);
+        String initial = session.nextRequestJson();
+        String text = uiNodeAlias(initial, "ui.Text");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(text),
+                "requestedOperations", List.of("replaceSubtree"))));
+        check(write.contains("parent") && write.contains("childCount"),
+                "the compact UI cone must expose enough hierarchy to choose a local target");
+        String result = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
+                "target", text,
+                "source", "ui.Text(value: \"Score\")",
+                "final", true)));
+        CanonicalJson.Obj object = object(result);
+        check(booleanField(object, "accepted"), "a local subtree replacement must compile");
+        check(stringField(object, "dealUi").contains("ui.Text(value: \"Score\")"),
+                "the target subtree must be replaced");
+        check(stringField(object, "dealUi").contains("ui.Button(text: \"Add\""),
+                "a sibling outside the target must remain byte-for-byte present");
+        check(stringField(object, "deal").equals(DEAL),
+                "a UI subtree replacement must not touch DEAL");
     }
 
     private static void rawDeclarationInsertionIsHiddenBehindSemanticTools() {
@@ -782,7 +814,7 @@ public final class CanonicalRefinementSessionTest {
                 "the combined write surface must still hide all query tools");
     }
 
-    private static void interfaceChangeAutomaticallyUnlocksRootView() {
+    private static void interfaceChangeRequestsMinimalUiInspection() {
         var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Add reset behavior", 3, 1);
         String dealEdit = session.acceptToolCallJson(
                 "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
@@ -794,14 +826,15 @@ public final class CanonicalRefinementSessionTest {
                 "actionDeclaration", "export class ResetAction {}",
                 "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {title: state.title, count: 0}; }",
                 "final", true)));
-        check(toolNames(request).contains("apply_deal_ui_changes"),
-                "an interface change must automatically unlock the affected root view");
-        check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
-                "interface repair must not require another model-selected inspection round");
-        check(request.contains("ui.Column"),
-                "the edit surface must contain the compiler-owned root view slice");
+        check(toolNames(request).contains("inspect_deal_ui_change"),
+                "an interface change must expose compiler-owned UI change inspection");
+        check(!toolNames(request).contains("apply_deal_ui_changes")
+                        && !toolNames(request).contains("replace_deal_ui_view"),
+                "an interface change must not pre-authorize a broad UI write");
+        check(request.contains("childCount") && request.contains("parent"),
+                "the UI index must expose compact hierarchy for selecting the smallest cone");
         check(request.contains("declarative and read-only"),
-                "an automatically opened UI edit must publish the Deal UI contract");
+                "the UI inspection phase must publish the Deal UI contract");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {

@@ -30,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v4";
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 2;
     private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
@@ -68,8 +69,10 @@ public final class CanonicalRefinementSession {
             assignment, arbitrary calls, length, methods, coercion or ternaries. Render dynamic collections
             only with ForEach(state.items, item: app.Item, key: item.id) { ... }. Use only compiler-published
             components, state paths, action constructors and tokens. A view body has exactly one root node.
-            Modernize an existing screen with replace_deal_ui_view. Never emulate view replacement by
-            removing the current root view and adding another view.
+            Prefer the smallest compiler-owned UI edit that satisfies the request. Use
+            replace_deal_ui_subtree for a local structural change and preserve every sibling outside
+            that node. Replace a whole view only when the requested hierarchy truly changes across
+            the complete screen. Never emulate view replacement by removing and re-adding the root view.
             """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
@@ -269,7 +272,7 @@ public final class CanonicalRefinementSession {
         Map<String, Object> request = new LinkedHashMap<>();
         request.put("status", "request");
         request.put("protocolVersion", CompilerProtocol.VERSION);
-        request.put("surfaceVersion", CompilerProtocol.AGENT_SURFACE_VERSION);
+        request.put("surfaceVersion", AGENT_SURFACE_VERSION);
         request.put("protocolMode", "v2-with-v1-shadow");
         request.put("surfaceDigest", surfaceDigest);
         int inputBytes = input.getBytes(StandardCharsets.UTF_8).length;
@@ -349,6 +352,7 @@ public final class CanonicalRefinementSession {
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
             case "replace_deal_ui_view" -> replaceDealUiView(arguments);
+            case "replace_deal_ui_subtree" -> replaceDealUiSubtree(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
             case "drop_repair_slot" -> dropRepairSlot(arguments);
@@ -384,7 +388,7 @@ public final class CanonicalRefinementSession {
                 "slotPatches", repairSlotPatches,
                 "maxDependencyGroupWidth", maxRepairGroupWidth));
         result.put("protocolVersion", CompilerProtocol.VERSION);
-        result.put("surfaceVersion", CompilerProtocol.AGENT_SURFACE_VERSION);
+        result.put("surfaceVersion", AGENT_SURFACE_VERSION);
         result.put("protocolMode", "v2-with-v1-shadow");
         result.put("inspection", inspection);
         result.put("transcript", transcript);
@@ -507,8 +511,14 @@ public final class CanonicalRefinementSession {
         List<OperationDescriptor> replaceViewGrants = dealUiGrants.values().stream()
                 .filter(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_VIEW_BODY))
                 .toList();
+        List<OperationDescriptor> replaceSubtreeGrants = dealUiGrants.values().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_SUBTREE))
+                .toList();
         if (!replaceViewGrants.isEmpty() && !generation) {
             result.add(replaceDealUiViewTool(replaceViewGrants));
+        }
+        if (!replaceSubtreeGrants.isEmpty() && !generation) {
+            result.add(replaceDealUiSubtreeTool(replaceSubtreeGrants));
         }
         if (!uiOperations.isEmpty()) {
             result.add(transactionTool(
@@ -586,6 +596,18 @@ public final class CanonicalRefinementSession {
                         "body", Map.of(
                                 "type", "string",
                                 "description", "Declarative statements inside the existing view only; omit the view signature and outer braces"),
+                        "final", Map.of("type", "boolean", "const", true))));
+    }
+
+    private Map<String, Object> replaceDealUiSubtreeTool(List<OperationDescriptor> grants) {
+        return tool(
+                "replace_deal_ui_subtree",
+                "Atomically replace exactly one inspected Deal UI node. Preserve all parent and sibling nodes outside the target.",
+                objectSchema(Map.of(
+                        "target", enumSchema(grants.stream().map(value -> alias(value.targetId())).toList()),
+                        "source", Map.of(
+                                "type", "string",
+                                "description", "Exactly one complete replacement subtree rooted at the target; omit unrelated siblings"),
                         "final", Map.of("type", "boolean", "const", true))));
     }
 
@@ -783,6 +805,7 @@ public final class CanonicalRefinementSession {
         List<Map<String, Object>> operations = new ArrayList<>();
         dealUiGrants.values().forEach(grant -> {
             if (!generation && grant.operation().equals(UiCompilerWorkspace.REPLACE_VIEW_BODY)) return;
+            if (!generation && grant.operation().equals(UiCompilerWorkspace.REPLACE_SUBTREE)) return;
             if (grant.operation().equals(UiCompilerWorkspace.REMOVE_VIEW)
                     && inspection.dealUi().views().stream().anyMatch(view ->
                             view.id().equals(grant.targetId()) && view.root())) return;
@@ -1026,19 +1049,7 @@ public final class CanonicalRefinementSession {
         } else {
             addTranscript("apply_deal_changes", Map.of("accepted", true, "impact", result.impact()));
         }
-        if (!generation && result.impact().interfaceChanged()) {
-            unlockRootViewAfterInterfaceChange();
-        }
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
-    }
-
-    private void unlockRootViewAfterInterfaceChange() {
-        if (inspection.dealUi() == null) return;
-        UiCompilerWorkspace.UiViewSnapshot target = inspection.dealUi().views().stream()
-                .filter(UiCompilerWorkspace.UiViewSnapshot::root)
-                .findFirst()
-                .orElseGet(() -> inspection.dealUi().views().stream().findFirst().orElse(null));
-        if (target != null) queryDealUiView(alias(target.id()));
     }
 
     private void unlockGreenfieldRootView() {
@@ -1208,6 +1219,23 @@ public final class CanonicalRefinementSession {
                                 "body", string(arguments, "body"))),
                         "final", booleanField(arguments, "final")))),
                 "view replacement transaction");
+        applyDealUi(transaction);
+    }
+
+    private void replaceDealUiSubtree(CanonicalJson.Obj arguments) {
+        SemanticId target = resolveAlias(string(arguments, "target"), "U");
+        OperationDescriptor grant = dealUiGrants.get(grantKey(UiCompilerWorkspace.REPLACE_SUBTREE, target));
+        if (grant == null) {
+            throw new IllegalArgumentException("Subtree replacement is outside the compiler-owned change cone");
+        }
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", List.of(Map.of(
+                                "operation", UiCompilerWorkspace.REPLACE_SUBTREE,
+                                "target", alias(target),
+                                "source", string(arguments, "source"))),
+                        "final", booleanField(arguments, "final")))),
+                "subtree replacement transaction");
         applyDealUi(transaction);
     }
 
@@ -1435,7 +1463,6 @@ public final class CanonicalRefinementSession {
         resetSurface();
         if (generation && finalChange) transcript.clear();
         else addTranscript("patch_repair_slot", Map.of("accepted", true, "impact", change.impact()));
-        if (!generation && change.impact().interfaceChanged()) unlockRootViewAfterInterfaceChange();
         if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
     }
 
@@ -1930,14 +1957,18 @@ public final class CanonicalRefinementSession {
                 "root", view.root(),
                 "roots", knownAliases(view.rootNodes())))
                 .toList();
-        List<Map<String, Object>> nodes = inspection.dealUi().nodes().stream().map(node -> Map.<String, Object>of(
-                "target", alias(node.id()),
-                "view", alias(node.ownerViewId()),
-                "kind", node.kind(),
-                "component", node.component(),
-                "state", node.statePaths(),
-                "actions", node.actionBindings()))
-                .toList();
+        List<Map<String, Object>> nodes = inspection.dealUi().nodes().stream().map(node -> {
+            Map<String, Object> value = new LinkedHashMap<>();
+            value.put("target", alias(node.id()));
+            value.put("view", alias(node.ownerViewId()));
+            if (node.parentId() != null) value.put("parent", alias(node.parentId()));
+            value.put("kind", node.kind());
+            value.put("component", node.component());
+            value.put("childCount", node.children().size());
+            value.put("state", node.statePaths());
+            value.put("actions", node.actionBindings());
+            return Map.copyOf(value);
+        }).toList();
         return Map.of(
                 "revision", inspection.dealUi().sourceDigest(),
                 "interfaceFingerprint", inspection.dealUi().appInterfaceFingerprint(),
@@ -1984,7 +2015,15 @@ public final class CanonicalRefinementSession {
         result.put("kind", slice.kind());
         result.put("source", slice.source());
         if (slice.node() != null) {
+            if (slice.node().parentId() != null) {
+                result.put("parent", alias(slice.node().parentId()));
+                UiCompilerWorkspace.UiNodeSnapshot parent = inspection.dealUi().nodes().stream()
+                        .filter(value -> value.id().equals(slice.node().parentId()))
+                        .findFirst().orElse(null);
+                if (parent != null) result.put("index", parent.children().indexOf(slice.node().id()));
+            }
             result.put("component", slice.node().component());
+            result.put("childCount", slice.node().children().size());
             result.put("state", slice.node().statePaths());
             result.put("actions", slice.node().actionBindings());
             result.put("properties", slice.node().writableProperties());
