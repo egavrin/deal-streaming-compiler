@@ -43,6 +43,7 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         inspectChangeUnlocksCompilerOwnedCone();
+        refinementPromptDistinguishesValidityFromRequestCompletion();
         inspectChangeSchemaKeepsArtifactAnchorsDisjoint();
         unchangedRequiresCompilerEvidence();
         rejectedDealBodyNarrowsRepairAndRollsForward();
@@ -71,6 +72,16 @@ public final class CanonicalRefinementSessionTest {
         greenfieldBehaviorBatchesAreCompilerBounded();
         oversizedFoundationRetriesWithoutCrashingOrConsumingRepair();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void refinementPromptDistinguishesValidityFromRequestCompletion() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add a pause action and control", 3, 1);
+        String request = session.nextRequestJson();
+        check(request.contains("A successful compile proves structural validity")
+                        && request.contains("Never satisfy a missing requirement")
+                        && request.contains("unrelated writable unit"),
+                "the Agent Surface must distinguish compiler validity from instruction fidelity");
     }
 
     private static void oversizedFoundationRetriesWithoutCrashingOrConsumingRepair() {

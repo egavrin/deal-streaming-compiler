@@ -49,6 +49,13 @@ public final class CanonicalRefinementSession {
             braces. Never include a function signature, declaration, or the outer braces in body.
             Inspecting a DEAL symbol or body also unlocks adding a new sibling declaration when the
             requested change needs a new record, action, helper or handler.
+            Before setting final=true, compare every concrete requirement in the current instruction
+            against the resulting compiler inspection. A successful compile proves structural validity,
+            not request completion. Every requested behavior must be represented by reachable actions,
+            handlers, state transitions or capabilities, and every requested presentation change by
+            reachable UI nodes or theme properties. Never satisfy a missing requirement by changing an
+            unrelated writable unit. If the current dependency cone is insufficient, finish the current
+            transaction with final=false and inspect the next required cone.
             """.strip();
     private static final String DEAL_EDIT_CONTRACT = """
 
