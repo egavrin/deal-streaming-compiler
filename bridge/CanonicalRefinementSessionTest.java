@@ -578,12 +578,12 @@ public final class CanonicalRefinementSessionTest {
                 "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
         check(dealEdit.contains("constructors, methods"),
                 "a DEAL edit surface must publish the relevant language subset");
-        String request = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class ResetAction {}"),
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {title: state.title, count: 0}; }")),
-                true));
+        check(toolNames(dealEdit).contains("add_deal_action_handler"),
+                "a writable module must expose the atomic action-handler Agent Surface");
+        String request = session.acceptToolCallJson("add_deal_action_handler", CompilerProtocolJson.encode(Map.of(
+                "actionDeclaration", "export class ResetAction {}",
+                "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {title: state.title, count: 0}; }",
+                "final", true)));
         check(toolNames(request).contains("apply_deal_ui_changes"),
                 "an interface change must automatically unlock the affected root view");
         check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
