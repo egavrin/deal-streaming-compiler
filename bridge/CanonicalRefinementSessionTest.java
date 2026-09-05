@@ -49,6 +49,7 @@ public final class CanonicalRefinementSessionTest {
         batchedQueriesConsumeOneProviderRound();
         writePhaseHidesAllQueryTools();
         dealBodyInspectionCanAddSiblingDeclarations();
+        rawDeclarationInsertionIsHiddenBehindSemanticTools();
         interfaceChangeAutomaticallyUnlocksRootView();
         interfaceChangeUsesAtomicRootViewReplacement();
         uiOnlyChangeNeverTouchesDeal();
@@ -512,6 +513,19 @@ public final class CanonicalRefinementSessionTest {
                 "atomic root-view replacement must produce a checked canonical revision");
         check(stringField(object(result), "dealUi").contains("UndoAction"),
                 "accepted Deal UI must contain the new binding");
+    }
+
+    private static void rawDeclarationInsertionIsHiddenBehindSemanticTools() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add a helper and an undo action", 6, 2);
+        String write = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of("M1"),
+                "requestedOperations", List.of("addDeclaration"))));
+        check(toolNames(write).contains("add_deal_action_handler")
+                        && toolNames(write).contains("add_deal_supporting_declaration"),
+                "declaration insertion must be split into compact semantic tools");
+        check(!write.contains("\"const\":\"addDeclaration\""),
+                "the LLM must not see raw addDeclaration during refinement");
     }
 
     private static void uiViewQueryCanAddAView() {

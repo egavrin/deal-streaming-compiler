@@ -333,6 +333,7 @@ public final class CanonicalRefinementSession {
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "append_deal_behavior" -> appendDealBehavior(arguments);
             case "add_deal_action_handler" -> addDealActionHandler(arguments);
+            case "add_deal_supporting_declaration" -> addDealSupportingDeclaration(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
             case "replace_deal_ui_view" -> replaceDealUiView(arguments);
@@ -452,9 +453,11 @@ public final class CanonicalRefinementSession {
             result.add(dealBehaviorTool());
         } else if (!dealOperations.isEmpty()) {
             result.add(transactionTool("apply_deal_changes", "Apply one atomic DEAL ChangeSet.", dealOperations));
-            if (!generation && dealOperations.stream().anyMatch(this::isAddDeclarationSchema)) {
-                result.add(dealActionHandlerTool());
-            }
+        }
+        if (!generation && dealGrants.values().stream().anyMatch(value ->
+                value.operation().equals(DealCompilerWorkspace.ADD_DECLARATION))) {
+            result.add(dealActionHandlerTool());
+            result.add(dealSupportingDeclarationTool());
         }
         if (generation && generationStage().equals("declarations")) {
             result.add(tool("finish_deal",
@@ -517,6 +520,17 @@ public final class CanonicalRefinementSession {
                                 "type", "string",
                                 "description", "Exactly one complete handler for that Action, starting with // @ui-update immediately before export function"),
                         "final", Map.of("type", "boolean", "const", true))));
+    }
+
+    private Map<String, Object> dealSupportingDeclarationTool() {
+        return tool(
+                "add_deal_supporting_declaration",
+                "Atomically add one non-action record or helper function. Classes whose names end in Action must use add_deal_action_handler instead.",
+                objectSchema(Map.of(
+                        "declaration", Map.of(
+                                "type", "string",
+                                "description", "Exactly one complete non-action field-only record class or helper function"),
+                        "final", Map.of("type", "boolean"))));
     }
 
     private Map<String, Object> replaceDealUiViewTool(List<OperationDescriptor> grants) {
@@ -676,6 +690,7 @@ public final class CanonicalRefinementSession {
         List<Map<String, Object>> operations = new ArrayList<>();
         dealGrants.values().forEach(grant -> {
             if (generation && !allowedGreenfieldDealOperation(grant)) return;
+            if (!generation && grant.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) return;
             Map<String, Object> extra = switch (grant.operation()) {
                 case DealCompilerWorkspace.ADD_DECLARATION ->
                         Map.of("declaration", editableStringSchema(
@@ -1063,6 +1078,24 @@ public final class CanonicalRefinementSession {
                                         "declaration", string(arguments, "handlerDeclaration"))),
                         "final", booleanField(arguments, "final")))),
                 "action-handler transaction");
+        applyDeal(transaction);
+    }
+
+    private void addDealSupportingDeclaration(CanonicalJson.Obj arguments) {
+        String declaration = string(arguments, "declaration");
+        if (declaration.matches("(?s).*\\bclass\\s+[A-Za-z_][A-Za-z0-9_]*Action\\b.*")) {
+            throw new IllegalArgumentException("Action declarations require add_deal_action_handler");
+        }
+        String module = alias(inspection.deal().moduleId());
+        grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", List.of(Map.of(
+                                "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                                "target", module,
+                                "declaration", declaration)),
+                        "final", booleanField(arguments, "final")))),
+                "supporting declaration transaction");
         applyDeal(transaction);
     }
 
