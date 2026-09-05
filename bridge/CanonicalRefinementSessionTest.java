@@ -82,10 +82,9 @@ public final class CanonicalRefinementSessionTest {
                 "the compact context must include the compiler cone fingerprint");
         String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
-                "target", body,
                 "body", "return {title: state.title, count: state.count + 2};"), true));
         check(booleanField(object(result), "accepted"),
-                "a transaction unlocked by inspect_change must compile");
+                "a uniquely targeted operation must infer its compiler target and compile");
     }
 
     private static void greenfieldBuildsDealBeforeDealUi() {

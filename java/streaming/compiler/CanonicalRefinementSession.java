@@ -1290,7 +1290,7 @@ public final class CanonicalRefinementSession {
         for (CanonicalJson.Value item : CompilerProtocolJson.requireArray(value, "DEAL operations").items()) {
             CanonicalJson.Obj operation = CompilerProtocolJson.requireObject(item, "DEAL operation");
             String name = string(operation, "operation");
-            SemanticId target = resolveAlias(string(operation, "target"), null);
+            SemanticId target = operationTarget(operation, name, dealGrants);
             result.add(switch (name) {
                 case DealCompilerWorkspace.ADD_DECLARATION -> new DealCompilerWorkspace.AddDeclaration(
                         target, string(operation, "declaration"));
@@ -1312,7 +1312,7 @@ public final class CanonicalRefinementSession {
         for (CanonicalJson.Value item : CompilerProtocolJson.requireArray(value, "Deal UI operations").items()) {
             CanonicalJson.Obj operation = CompilerProtocolJson.requireObject(item, "Deal UI operation");
             String name = string(operation, "operation");
-            SemanticId target = resolveAlias(string(operation, "target"), null);
+            SemanticId target = operationTarget(operation, name, dealUiGrants);
             result.add(switch (name) {
                 case UiCompilerWorkspace.ADD_VIEW -> new UiCompilerWorkspace.AddView(
                         target, string(operation, "source"));
@@ -1592,6 +1592,29 @@ public final class CanonicalRefinementSession {
         return operation + ":" + id.value();
     }
 
+    private SemanticId operationTarget(
+            CanonicalJson.Obj operation,
+            String operationName,
+            Map<String, OperationDescriptor> grants) {
+        CanonicalJson.Value explicit = operation.entries().stream()
+                .filter(entry -> entry.key().equals("target"))
+                .map(CanonicalJson.Entry::value)
+                .findFirst().orElse(null);
+        if (explicit instanceof CanonicalJson.Str value) return resolveAlias(value.value(), null);
+        List<SemanticId> candidates = grants.values().stream()
+                .filter(grant -> grant.operation().equals(operationName))
+                .filter(grant -> repairScopes.isEmpty() || repairScopes.stream().anyMatch(scope ->
+                        scope.operation().equals(operationName) && scope.ownerId().equals(grant.targetId())))
+                .map(OperationDescriptor::targetId)
+                .distinct()
+                .toList();
+        if (candidates.size() != 1) {
+            throw new IllegalArgumentException(
+                    "Operation " + operationName + " requires an explicit compiler target");
+        }
+        return candidates.get(0);
+    }
+
     private List<String> queriedUiContainerAliases() {
         return dealUiGrants.values().stream()
                 .filter(value -> value.operation().equals(UiCompilerWorkspace.INSERT_CHILD))
@@ -1604,9 +1627,37 @@ public final class CanonicalRefinementSession {
 
     private static Map<String, Object> transactionTool(
             String name, String description, List<Map<String, Object>> variants) {
+        List<Map<String, Object>> compactVariants = omitUnambiguousTargets(variants);
         return tool(name, description, objectSchema(Map.of(
-                "operations", Map.of("type", "array", "minItems", 1, "items", Map.of("anyOf", variants)),
+                "operations", Map.of("type", "array", "minItems", 1,
+                        "items", Map.of("anyOf", compactVariants)),
                 "final", Map.of("type", "boolean"))));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> omitUnambiguousTargets(List<Map<String, Object>> variants) {
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (Map<String, Object> variant : variants) {
+            Map<String, Object> properties = (Map<String, Object>) variant.get("properties");
+            Map<String, Object> operation = (Map<String, Object>) properties.get("operation");
+            counts.merge((String) operation.get("const"), 1, Integer::sum);
+        }
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> variant : variants) {
+            Map<String, Object> properties = (Map<String, Object>) variant.get("properties");
+            Map<String, Object> operation = (Map<String, Object>) properties.get("operation");
+            if (counts.get((String) operation.get("const")) != 1 || !properties.containsKey("target")) {
+                result.add(variant);
+                continue;
+            }
+            Map<String, Object> compactProperties = new LinkedHashMap<>(properties);
+            compactProperties.remove("target");
+            Map<String, Object> compact = new LinkedHashMap<>(variant);
+            compact.put("properties", Map.copyOf(compactProperties));
+            compact.put("required", List.copyOf(compactProperties.keySet()));
+            result.add(Map.copyOf(compact));
+        }
+        return List.copyOf(result);
     }
 
     private static Map<String, Object> tool(String name, String description, Map<String, Object> parameters) {
