@@ -119,6 +119,8 @@ public final class CanonicalRefinementSession {
             indexing, array/object literals, assignments, arbitrary calls, length, methods or
             string-number coercion or ternary expressions. Dynamic collections use exactly
             ForEach(state.items, item: app.Item, key: item.id) { ui.Text(value: item.label) }.
+            The key expression must be a stable unique int or string field rooted at the item. Never
+            use a boolean, display value, list index or mutable status as a key.
             Do not use ui.ForEach, item in, lambdas or a body parameter line. Use === and !== for
             equality and When(condition) { ... } Else { ... } for visual branches. Bind all
             reachable input actions. Use semantic native components, one app-owned AppTheme, an
