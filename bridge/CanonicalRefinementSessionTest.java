@@ -43,6 +43,7 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         inspectChangeUnlocksCompilerOwnedCone();
+        stateSchemaEvolutionUsesOneAtomicTool();
         refinementPromptDistinguishesValidityFromRequestCompletion();
         inspectChangeSchemaKeepsArtifactAnchorsDisjoint();
         unchangedRequiresCompilerEvidence();
@@ -326,6 +327,34 @@ public final class CanonicalRefinementSessionTest {
                 "body", "return {title: state.title, count: state.count + 2};"), true));
         check(booleanField(object(result), "accepted"),
                 "a uniquely targeted operation must infer its compiler target and compile");
+    }
+
+    private static void stateSchemaEvolutionUsesOneAtomicTool() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add a pause state and toggle action", 6, 2);
+        String initial = session.nextRequestJson();
+        String appState = dealSymbolAlias(initial, "AppState");
+        String initialState = dealSymbolAlias(initial, "initialState");
+        String initialBody = dealBodyAlias(initial, initialState);
+        String write = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of("M1", appState, initialBody),
+                "requestedOperations", List.of(
+                        "addDeclaration", "replaceDeclaration", "replaceFunctionBody"))));
+        check(toolNames(write).contains("evolve_deal_state"),
+                "a root-state schema cone must expose one cohesive state-evolution tool");
+        check(!toolNames(write).contains("apply_deal_changes"),
+                "the state-evolution cone must hide the broad transaction that permits half-applied schemas");
+        String next = session.acceptToolCallJson("evolve_deal_state", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"Ready\"; count: int = 0; paused: boolean = false; }",
+                "initialStateBody", "return {title: \"Ready\", count: 0, paused: false};",
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class TogglePauseAction {}",
+                        "handlerDeclaration", "// @ui-update\nexport function togglePause(state: AppState, action: TogglePauseAction): AppState { return {title: state.title, count: state.count, paused: !state.paused}; }")),
+                "final", false)));
+        check(stringField(object(next), "input").contains("TogglePauseAction")
+                        && stringField(object(next), "input").contains("paused"),
+                "the compiler must commit the complete state schema group and continue from its new interface");
     }
 
     private static void greenfieldBuildsDealBeforeDealUi() {

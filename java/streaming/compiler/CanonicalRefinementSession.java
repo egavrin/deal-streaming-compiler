@@ -355,6 +355,7 @@ public final class CanonicalRefinementSession {
             case "inspect_deal_ui_change" -> inspectChange("dealui", arguments);
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "append_deal_behavior" -> appendDealBehavior(arguments);
+            case "evolve_deal_state" -> evolveDealState(arguments);
             case "add_deal_action_handler" -> addDealActionHandler(arguments);
             case "add_deal_supporting_declaration" -> addDealSupportingDeclaration(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
@@ -497,6 +498,8 @@ public final class CanonicalRefinementSession {
                                             + "Store recurring schedule rules compactly; never enumerate every future occurrence")))));
         } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal) {
             result.add(dealBehaviorTool());
+        } else if (stateEvolutionAvailable()) {
+            result.add(dealStateEvolutionTool());
         } else if (!dealOperations.isEmpty()) {
             result.add(transactionTool("apply_deal_changes", "Apply one atomic DEAL ChangeSet.", dealOperations));
         }
@@ -558,13 +561,7 @@ public final class CanonicalRefinementSession {
     }
 
     private Map<String, Object> dealBehaviorTool() {
-        Map<String, Object> actionHandler = objectSchema(Map.of(
-                "actionDeclaration", Map.of(
-                        "type", "string",
-                        "description", "Exactly one complete unique field-only export class Action declaration"),
-                "handlerDeclaration", Map.of(
-                        "type", "string",
-                        "description", "Exactly one complete export function for that Action. Put // @ui-update on the line immediately before export function")));
+        Map<String, Object> actionHandler = actionHandlerSchema();
         return tool(
                 "append_deal_behavior",
                 "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Completion is a separate compiler-owned finish_deal step after this bounded batch.",
@@ -581,6 +578,53 @@ public final class CanonicalRefinementSession {
                                 "type", "boolean",
                                 "const", false,
                                 "description", "Always false. The next compact surface audits request coverage before finish_deal"))));
+    }
+
+    private Map<String, Object> actionHandlerSchema() {
+        return objectSchema(Map.of(
+                "actionDeclaration", Map.of(
+                        "type", "string",
+                        "description", "Exactly one complete unique field-only export class Action declaration"),
+                "handlerDeclaration", Map.of(
+                        "type", "string",
+                        "description", "Exactly one complete export function for that Action. Put // @ui-update on the line immediately before export function")));
+    }
+
+    private Map<String, Object> dealStateEvolutionTool() {
+        return tool(
+                "evolve_deal_state",
+                "Atomically evolve the root state schema and initializer with their directly dependent records and action-handler pairs. AppState and initialState are both required, so a half-applied schema change cannot enter repair.",
+                objectSchema(Map.of(
+                        "supportingDeclarations", Map.of(
+                                "type", "array", "maxItems", MAX_FOUNDATION_RECORD_DECLARATIONS,
+                                "items", Map.of("type", "string", "description",
+                                        "One complete new field-only record class or helper required by the evolved state")),
+                        "appStateDeclaration", Map.of(
+                                "type", "string", "maxLength", MAX_BOOTSTRAP_DECLARATION_CHARS,
+                                "description", "Complete replacement export class AppState declaration. Preserve every existing field unless the instruction explicitly removes it"),
+                        "initialStateBody", Map.of(
+                                "type", "string", "maxLength", MAX_INITIAL_STATE_BODY_CHARS,
+                                "description", "Complete replacement statements for initialState. Return every field in the evolved AppState and preserve existing initialized behavior"),
+                        "actionHandlers", Map.of(
+                                "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
+                                "type", "array", "items", actionHandlerSchema()),
+                        "final", Map.of("type", "boolean"))));
+    }
+
+    private boolean stateEvolutionAvailable() {
+        if (generation) return false;
+        SemanticId appState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("AppState"))
+                .map(SymbolSnapshot::id).findFirst().orElse(null);
+        SemanticId initialState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("initialState"))
+                .map(SymbolSnapshot::id).findFirst().orElse(null);
+        SemanticId initialBody = initialState == null ? null : inspection.deal().nodes().stream()
+                .filter(node -> node.ownerId().equals(initialState) && node.kind().equals("function-body"))
+                .map(node -> node.id()).findFirst().orElse(null);
+        return appState != null && initialBody != null
+                && dealGrants.containsKey(grantKey(DealCompilerWorkspace.REPLACE_DECLARATION, appState))
+                && dealGrants.containsKey(grantKey(DealCompilerWorkspace.REPLACE_FUNCTION_BODY, initialBody));
     }
 
     private Map<String, Object> dealActionHandlerTool() {
@@ -1191,6 +1235,65 @@ public final class CanonicalRefinementSession {
                         "operations", operations,
                         "final", false))),
                 "behavior transaction");
+        applyDeal(transaction);
+    }
+
+    private void evolveDealState(CanonicalJson.Obj arguments) {
+        if (!stateEvolutionAvailable()) {
+            throw new IllegalArgumentException("State evolution requires compiler grants for both AppState and initialState");
+        }
+        List<Map<String, Object>> operations = new ArrayList<>();
+        String module = alias(inspection.deal().moduleId());
+        grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
+        CanonicalJson.Arr supporting = CompilerProtocolJson.requireArray(
+                field(arguments, "supportingDeclarations"), "supportingDeclarations");
+        if (supporting.items().size() > MAX_FOUNDATION_RECORD_DECLARATIONS) {
+            rejectAgentSurface("evolve_deal_state", "SC2006",
+                    "A state evolution accepts at most " + MAX_FOUNDATION_RECORD_DECLARATIONS
+                            + " directly dependent declarations. Split unrelated behavior into a later transaction.");
+            return;
+        }
+        for (CanonicalJson.Value value : supporting.items()) {
+            if (!(value instanceof CanonicalJson.Str declaration)) {
+                throw new IllegalArgumentException("supportingDeclarations must contain strings");
+            }
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", declaration.value()));
+        }
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.REPLACE_DECLARATION,
+                "target", symbolAlias("AppState"),
+                "declaration", string(arguments, "appStateDeclaration")));
+        operations.add(Map.of(
+                "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                "target", nodeAliases("initialState").get(0),
+                "body", string(arguments, "initialStateBody")));
+        CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
+                field(arguments, "actionHandlers"), "actionHandlers");
+        if (pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
+            rejectAgentSurface("evolve_deal_state", "SC2007",
+                    "A state evolution accepts at most " + MAX_ACTION_HANDLERS_PER_BATCH
+                            + " cohesive action-handler pairs. Continue unrelated behavior in a later transaction.");
+            return;
+        }
+        for (CanonicalJson.Value value : pairs.items()) {
+            CanonicalJson.Obj pair = CompilerProtocolJson.requireObject(value, "action-handler pair");
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", string(pair, "actionDeclaration")));
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", string(pair, "handlerDeclaration")));
+        }
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", operations,
+                        "final", booleanField(arguments, "final")))),
+                "state evolution transaction");
         applyDeal(transaction);
     }
 
