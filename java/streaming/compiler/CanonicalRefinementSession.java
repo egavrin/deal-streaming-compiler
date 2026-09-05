@@ -419,7 +419,7 @@ public final class CanonicalRefinementSession {
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!repairDiagnostics.isEmpty()) {
             context.put("repairDirective", Map.of(
-                    "instruction", "Change the rejected operation. The previous payload is excluded by the active tool schema; never resubmit it.",
+                    "instruction", "Change the rejected operation according to its diagnostics. Never resubmit the previous payload.",
                     "rejectedCandidateFingerprint", rejectedAttemptFingerprint,
                     "diagnostics", compactDiagnostics(repairDiagnostics)));
         }
@@ -1371,12 +1371,9 @@ public final class CanonicalRefinementSession {
     }
 
     private Map<String, Object> repairStringSchema(RepairSlot slot, String field) {
-        Map<String, Object> schema = new LinkedHashMap<>();
-        schema.put("type", "string");
-        schema.put("description", repairFieldDescription(slot, field));
-        String rejected = slot.payload().get(field);
-        if (rejected != null) schema.put("not", Map.of("const", rejected));
-        return Map.copyOf(schema);
+        return Map.of(
+                "type", "string",
+                "description", repairFieldDescription(slot, field));
     }
 
     private void reject(

@@ -144,9 +144,8 @@ public final class CanonicalRefinementSessionTest {
         check(toolNames(repair).contains("patch_repair_slot"),
                 "an untyped empty array must enter compiler-owned repair");
         check(repair.contains("Give every empty local array an explicit element type")
-                        && repair.contains("never include a class or function declaration")
-                        && repair.contains("\"not\":{\"const\""),
-                "repair tool must teach and structurally exclude the rejected body: " + repair);
+                        && repair.contains("never include a class or function declaration"),
+                "repair tool must teach the constrained body contract: " + repair);
         String repaired = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
                 "slot", "R3",
                 "payload", Map.of("body",
