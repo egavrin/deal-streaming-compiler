@@ -48,7 +48,7 @@ public final class CanonicalRefinementSessionTest {
         writePhaseHidesAllQueryTools();
         interfaceChangeAutomaticallyUnlocksRootView();
         uiOnlyChangeNeverTouchesDeal();
-        uiDocumentQueryCanAddAView();
+        uiViewQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
         greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState();
         greenfieldFinalFalseKeepsBuildingDeal();
@@ -369,16 +369,19 @@ public final class CanonicalRefinementSessionTest {
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
     }
 
-    private static void uiDocumentQueryCanAddAView() {
+    private static void uiViewQueryCanAddAView() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Add a reusable detail view", 4, 1);
         String initial = session.nextRequestJson();
-        check(toolNames(initial).contains("query_deal_ui_document"),
-                "the compact surface must expose compiler-owned document inspection");
+        check(!toolNames(initial).contains("query_deal_ui_document"),
+                "the compact surface must hide rich document inspection");
+        String appView = uiViewAlias(initial, "App");
         String applyRequest = session.acceptToolCallJson(
-                "query_deal_ui_document", CompilerProtocolJson.encode(Map.of("target", "D1")));
+                "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", appView)));
         check(toolNames(applyRequest).contains("apply_deal_ui_changes"),
-                "document query must unlock the checked UI transaction");
+                "view inspection must unlock the checked UI transaction");
+        check(applyRequest.contains("addView"),
+                "view inspection must expose sibling insertion without a document query");
         String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
                 "operation", "addView",
                 "target", "D1",

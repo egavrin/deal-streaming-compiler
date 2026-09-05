@@ -389,8 +389,8 @@ public final class CanonicalRefinementSession {
             }
         }
         if (!repairing && !writeUnlocked && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
-            addQueryTool(result, "query_deal_ui_document", "Unlock adding a new Deal UI view.", "D");
-            addQueryTool(result, "query_deal_ui_view", "Read one complete Deal UI view.", "V");
+            addQueryTool(result, "query_deal_ui_view",
+                    "Read one complete Deal UI view; this also unlocks adding a sibling view when needed.", "V");
             addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
@@ -593,6 +593,8 @@ public final class CanonicalRefinementSession {
         SemanticId id = resolveAlias(target, "V");
         var slice = CanonicalCompiler.queryDealUiView(deal, dealUi, pack, packSpecifier, id);
         grant(dealUiGrants, slice.allowedOperations());
+        var document = CanonicalCompiler.queryDealUiDocument(deal, dealUi, pack, packSpecifier);
+        grant(dealUiGrants, document.allowedOperations());
         queriedAliases.add(target);
         addTranscript("query_deal_ui_view", compactUiSlice(slice));
         forcedArtifact = "dealui";
