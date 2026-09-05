@@ -388,6 +388,7 @@ public final class CanonicalRefinementSession {
                     "activeSlot", Map.of(
                             "slot", active.slotId(),
                             "operation", active.operation(),
+                            "target", alias(active.targetId()),
                             "payload", agentRepairPayload(active),
                             "diagnostics", compactDiagnostics(active.diagnostics())),
                     "preservedSlots", repairWorkspace.slots().stream()
@@ -518,7 +519,7 @@ public final class CanonicalRefinementSession {
             case "newParentId" -> enumSchema(aliases("U"));
             default -> Map.of(
                     "type", "string",
-                    "description", "Complete replacement for the rejected " + field + " payload");
+                    "description", repairFieldDescription(active, field));
         }));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "object");
@@ -527,7 +528,8 @@ public final class CanonicalRefinementSession {
         payload.put("required", List.copyOf(fields));
         return tool(
                 "patch_repair_slot",
-                "Patch one compiler-rejected slot. The operation, target and accepted siblings are immutable.",
+                "Patch the rejected " + active.operation() + " payload for compiler target "
+                        + alias(active.targetId()) + ". The target and accepted siblings are immutable.",
                 objectSchema(Map.of(
                         "slot", constantString(active.slotId()),
                         "payload", payload)));
@@ -994,6 +996,8 @@ public final class CanonicalRefinementSession {
                 "diagnostics", compactDiagnostics(diagnostics),
                 "slots", workspace.slots().stream().map(value -> Map.of(
                         "slot", value.slotId(),
+                        "operation", value.operation(),
+                        "target", alias(value.targetId()),
                         "status", value.status().name(),
                         "payloadFingerprint", value.payloadFingerprint())).toList()));
         if (artifactRepairs > maxSemanticRepairs) {
@@ -1117,6 +1121,19 @@ public final class CanonicalRefinementSession {
             result.put("newParentId", aliasesById.getOrDefault(result.get("newParentId"), "unavailable"));
         }
         return Map.copyOf(result);
+    }
+
+    private String repairFieldDescription(RepairSlot slot, String field) {
+        String contract = slot.diagnostics().stream()
+                .map(value -> value.expected().isBlank()
+                        ? value.message()
+                        : value.message() + "; required: " + value.expected() + "; rejected: " + value.actual())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(" | "));
+        return "Complete replacement for field " + field + " of " + slot.operation()
+                + " on compiler target " + alias(slot.targetId())
+                + ". It must differ from the rejected payload"
+                + (contract.isBlank() ? "." : ". " + contract);
     }
 
     private void reject(

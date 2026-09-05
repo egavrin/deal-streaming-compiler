@@ -390,6 +390,15 @@ public final class CanonicalRefinementSessionTest {
         check(repairRequest.contains("return missing"), "repair context must retain the rejected body");
         check(repairRequest.contains("activeSlot") && repairRequest.contains("R1"),
                 "repair context must use a compiler-owned slot identity");
+        CanonicalJson.Obj repairInput = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(repairRequest), "input")), "repair input");
+        CanonicalJson.Obj repairWorkspace = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.field(repairInput, "repairWorkspace"), "repair workspace");
+        CanonicalJson.Obj activeSlot = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.field(repairWorkspace, "activeSlot"), "active repair slot");
+        check(repairRequest.contains("compiler target " + body)
+                        && stringField(activeSlot, "target").equals(body),
+                "the narrow repair surface must identify the immutable compiler target");
         String repeated = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
                 "slot", "R1", "payload", Map.of("body", "return missing;"))));
         CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repeated), "semanticRepairs");
