@@ -33,7 +33,7 @@ public final class CanonicalRefinementSession {
     private static final String AGENT_SURFACE_VERSION = "agent-surface-v4";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
-    private static final int MAX_ACTION_HANDLERS_PER_BATCH = 2;
+    private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
     private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
     private static final int MAX_INITIAL_STATE_BODY_CHARS = 6_000;
     private static final String REFINEMENT_SYSTEM_PROMPT = """

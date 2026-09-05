@@ -121,7 +121,7 @@ public final class CanonicalRefinementSessionTest {
                 "supportingDeclarations", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
                 "initialStateBody", "return {title: \"Ready\", count: 0};")));
-        check(behavior.contains("\"maxItems\":2"),
+        check(behavior.contains("\"maxItems\":4"),
                 "the compiler surface must cap action and helper batches before provider generation: " + behavior);
 
         var pair = Map.of(
@@ -131,7 +131,7 @@ public final class CanonicalRefinementSessionTest {
                         + "return {title: state.title, count: state.count + 1}; }");
         String rejected = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
-                "actionHandlers", List.of(pair, pair, pair),
+                "actionHandlers", List.of(pair, pair, pair, pair, pair),
                 "final", false)));
         check(toolNames(rejected).contains("append_deal_behavior")
                         && rejected.contains("SC2005")
