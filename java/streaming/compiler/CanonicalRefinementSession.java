@@ -33,11 +33,11 @@ public final class CanonicalRefinementSession {
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
-            change through inspect_change, then submit one small atomic transaction using only operations unlocked by
+            change through the artifact-specific inspect tool, then submit one small atomic transaction using only operations unlocked by
             the compiler-owned dependency cone. Never regenerate an unrelated unit. Compiler diagnostics and writable repair
             scopes are authoritative. Use no scenario templates. Set final to false only when another
             behavior or visual transaction is required. The surface has distinct inspect and edit
-            phases. In the inspect phase call inspect_change once with every required semantic anchor
+            phases. In the inspect phase call inspect_deal_change or inspect_deal_ui_change once with every required semantic anchor
             and operation kind. In the edit phase call the single write tool directly. Emit exactly
             one write tool call.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
@@ -326,7 +326,8 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_view" -> queryDealUiView(string(arguments, "target"));
             case "query_deal_ui_document" -> queryDealUiDocument(string(arguments, "target"));
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
-            case "inspect_change" -> inspectChange(arguments);
+            case "inspect_deal_change" -> inspectChange("deal", arguments);
+            case "inspect_deal_ui_change" -> inspectChange("dealui", arguments);
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "append_deal_behavior" -> appendDealBehavior(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
@@ -340,7 +341,8 @@ public final class CanonicalRefinementSession {
 
     private static boolean isReadOnlyQuery(String name) {
         return name.equals("query_deal_module")
-                || name.equals("inspect_change")
+                || name.equals("inspect_deal_change")
+                || name.equals("inspect_deal_ui_change")
                 || name.equals("query_deal_symbol")
                 || name.equals("query_deal_node")
                 || name.equals("query_deal_ui_document")
@@ -426,7 +428,7 @@ public final class CanonicalRefinementSession {
         boolean repairing = !repairScopes.isEmpty();
         boolean writeUnlocked = !dealGrants.isEmpty() || !dealUiGrants.isEmpty();
         if (!repairing && !writeUnlocked) {
-            result.add(inspectChangeTool());
+            result.addAll(inspectChangeTools());
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
         if (generation && generationStage().equals("bootstrap") && foundationReady()) {
@@ -507,23 +509,19 @@ public final class CanonicalRefinementSession {
         queriedAliases.add(alias(initialBody));
     }
 
-    private Map<String, Object> inspectChangeTool() {
+    private List<Map<String, Object>> inspectChangeTools() {
         List<String> artifacts = new ArrayList<>();
         if (!forcedArtifact.equals("dealui")) artifacts.add("deal");
         if (!forcedArtifact.equals("deal") && inspection.dealUi() != null) artifacts.add("dealui");
         if (artifacts.isEmpty()) artifacts.add(forcedArtifact);
-        List<Map<String, Object>> branches = artifacts.stream()
-                .map(this::inspectChangeBranch)
-                .toList();
-        Map<String, Object> parameters = branches.size() == 1
-                ? branches.get(0)
-                : Map.of("type", "object", "anyOf", branches);
-        return tool("inspect_change",
-                "Select semantic anchors and operation kinds. The compiler derives the minimum dependency cone and writable surface.",
-                parameters);
+        return artifacts.stream().map(artifact -> tool(
+                artifact.equals("deal") ? "inspect_deal_change" : "inspect_deal_ui_change",
+                "Select " + (artifact.equals("deal") ? "DEAL" : "Deal UI")
+                        + " anchors and operation kinds. The compiler derives the minimum dependency cone and writable surface.",
+                inspectChangeParameters(artifact))).toList();
     }
 
-    private Map<String, Object> inspectChangeBranch(String artifact) {
+    private Map<String, Object> inspectChangeParameters(String artifact) {
         List<String> targets = new ArrayList<>();
         List<String> operations = new ArrayList<>();
         if (artifact.equals("deal")) {
@@ -551,7 +549,6 @@ public final class CanonicalRefinementSession {
                     UiCompilerWorkspace.SET_PROPERTY));
         }
         return objectSchema(Map.of(
-                "artifact", constantString(artifact),
                 "anchors", Map.of(
                         "type", "array", "minItems", 1, "uniqueItems", true,
                         "items", enumSchema(targets)),
@@ -729,17 +726,16 @@ public final class CanonicalRefinementSession {
         forcedArtifact = "deal";
     }
 
-    private void inspectChange(CanonicalJson.Obj arguments) {
-        String artifact = string(arguments, "artifact");
+    private void inspectChange(String artifact, CanonicalJson.Obj arguments) {
         List<String> anchorAliases = stringArray(arguments, "anchors");
         List<String> requestedOperations = stringArray(arguments, "requestedOperations");
         if (!artifact.equals("deal") && !artifact.equals("dealui")) {
-            throw new IllegalArgumentException("inspect_change artifact must be deal or dealui");
+            throw new IllegalArgumentException("inspect artifact must be deal or dealui");
         }
         boolean wrongAlias = anchorAliases.stream().anyMatch(value -> artifact.equals("deal")
                 ? !(value.startsWith("M") || value.startsWith("S") || value.startsWith("B"))
                 : !(value.startsWith("D") || value.startsWith("V") || value.startsWith("U")));
-        if (wrongAlias) throw new IllegalArgumentException("inspect_change anchor belongs to another artifact");
+        if (wrongAlias) throw new IllegalArgumentException("inspect anchor belongs to another artifact");
         List<SemanticId> anchors = anchorAliases.stream()
                 .map(value -> resolveAlias(value, null)).toList();
         ChangeInspection change = artifact.equals("deal")
@@ -749,13 +745,13 @@ public final class CanonicalRefinementSession {
                         deal, dealUi, pack, packSpecifier,
                         inspection.dealUi().sourceDigest(), anchors, requestedOperations);
         if (!change.diagnostics().isEmpty()) {
-            throw new IllegalArgumentException("Compiler rejected inspect_change: "
+            throw new IllegalArgumentException("Compiler rejected inspect operation: "
                     + compactDiagnostics(change.diagnostics()));
         }
         if (artifact.equals("deal")) grant(dealGrants, change.allowedOperations());
         else grant(dealUiGrants, change.allowedOperations());
         queriedAliases.addAll(anchorAliases);
-        addTranscript("inspect_change", Map.of(
+        addTranscript(artifact.equals("deal") ? "inspect_deal_change" : "inspect_deal_ui_change", Map.of(
                 "artifact", artifact,
                 "coneFingerprint", change.dependencyCone().fingerprint(),
                 "anchors", anchorAliases,

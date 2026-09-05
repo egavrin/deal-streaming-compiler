@@ -69,30 +69,21 @@ public final class CanonicalRefinementSessionTest {
         CanonicalJson.Obj request = object(session.nextRequestJson());
         CanonicalJson.Arr tools = CompilerProtocolJson.requireArray(
                 CompilerProtocolJson.field(request, "tools"), "tools");
-        CanonicalJson.Obj inspect = tools.items().stream()
+        Map<String, String> schemas = new java.util.LinkedHashMap<>();
+        tools.items().stream()
                 .map(value -> CompilerProtocolJson.requireObject(value, "tool"))
-                .filter(value -> stringField(value, "name").equals("inspect_change"))
-                .findFirst().orElseThrow();
-        CanonicalJson.Obj parameters = CompilerProtocolJson.requireObject(
-                CompilerProtocolJson.field(inspect, "parameters"), "parameters");
-        CanonicalJson.Arr branches = CompilerProtocolJson.requireArray(
-                CompilerProtocolJson.field(parameters, "anyOf"), "inspect branches");
-        check(branches.items().size() == 2,
-                "mixed refinement must publish separate DEAL and Deal UI schema branches");
-        for (CanonicalJson.Value value : branches.items()) {
-            String encoded = CompilerProtocolJson.encode(value);
-            CanonicalJson.Obj branch = CompilerProtocolJson.requireObject(value, "inspect branch");
-            CanonicalJson.Obj properties = CompilerProtocolJson.requireObject(
-                    CompilerProtocolJson.field(branch, "properties"), "properties");
-            String artifact = stringField(
-                    CompilerProtocolJson.requireObject(
-                            CompilerProtocolJson.field(properties, "artifact"), "artifact"),
-                    "const");
-            check(artifact.equals("deal")
-                            ? !encoded.contains("\"V1\"") && !encoded.contains("\"U1\"")
-                            : !encoded.contains("\"S1\"") && !encoded.contains("\"B1\""),
-                    "inspect branch must not admit anchors owned by the other artifact: " + encoded);
-        }
+                .filter(value -> stringField(value, "name").startsWith("inspect_"))
+                .forEach(value -> schemas.put(
+                        stringField(value, "name"),
+                        CompilerProtocolJson.encode(CompilerProtocolJson.field(value, "parameters"))));
+        check(schemas.keySet().equals(java.util.Set.of("inspect_deal_change", "inspect_deal_ui_change")),
+                "mixed refinement must publish separate DEAL and Deal UI inspect tools: " + schemas.keySet());
+        check(!schemas.get("inspect_deal_change").contains("\"V1\"")
+                        && !schemas.get("inspect_deal_change").contains("\"U1\""),
+                "DEAL inspect must not admit Deal UI anchors");
+        check(!schemas.get("inspect_deal_ui_change").contains("\"S1\"")
+                        && !schemas.get("inspect_deal_ui_change").contains("\"B1\""),
+                "Deal UI inspect must not admit DEAL anchors");
     }
 
     private static void numericStringRepairExplainsTypedUiFormatting() {
@@ -124,18 +115,19 @@ public final class CanonicalRefinementSessionTest {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Increment by two", 4, 1);
         String initial = session.nextRequestJson();
-        check(toolNames(initial).contains("inspect_change")
+        check(toolNames(initial).contains("inspect_deal_change")
+                        && toolNames(initial).contains("inspect_deal_ui_change")
                         && toolNames(initial).stream().noneMatch(value -> value.startsWith("query_")),
                 "the initial agent surface must expose compiler-owned change inspection without query tools");
         String update = dealSymbolAlias(initial, "update");
         String body = dealBodyAlias(initial, update);
-        String write = session.acceptToolCallJson("inspect_change", CompilerProtocolJson.encode(Map.of(
-                "artifact", "deal",
+        String write = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of(body),
                 "requestedOperations", List.of("replaceFunctionBody"))));
         check(toolNames(write).contains("apply_deal_changes"),
                 "inspect_change must unlock the operation issued by the compiler cone");
-        check(!toolNames(write).contains("inspect_change"),
+        check(!toolNames(write).contains("inspect_deal_change")
+                        && !toolNames(write).contains("inspect_deal_ui_change"),
                 "write phase must not retain the inspection tool");
         check(write.contains("coneFingerprint"),
                 "the compact context must include the compiler cone fingerprint");
@@ -157,7 +149,7 @@ public final class CanonicalRefinementSessionTest {
         check(!toolNames(initial).contains("query_deal_ui_view"),
                 "Deal UI must stay hidden until DEAL is accepted");
         check(toolNames(initial).contains("apply_deal_foundation")
-                        && !toolNames(initial).contains("inspect_change"),
+                        && toolNames(initial).stream().noneMatch(value -> value.startsWith("inspect_")),
                 "greenfield bootstrap must expose compiler-owned foundation slots directly");
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
@@ -238,7 +230,7 @@ public final class CanonicalRefinementSessionTest {
                 CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
         check(stringField(input, "requiredArtifact").equals("deal"),
                 "final=false must keep complex greenfield generation in DEAL");
-        check(toolNames(next).contains("inspect_change"),
+        check(toolNames(next).contains("inspect_deal_change"),
                 "the next DEAL revision must expose a fresh compiler surface");
         check(!toolNames(next).contains("query_deal_symbol"),
                 "completed bootstrap declarations must become read-only index entries");
@@ -262,7 +254,7 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI must remain hidden until DEAL final=true");
         String ui = session.acceptToolCallJson(
                 "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
-        check(toolNames(ui).contains("inspect_change"),
+        check(toolNames(ui).contains("inspect_deal_ui_change"),
                 "finish_deal must expose Deal UI without another DEAL mutation");
     }
 
@@ -284,7 +276,7 @@ public final class CanonicalRefinementSessionTest {
                 "partial bootstrap must not unlock unrelated declarations");
         check(!next.contains("\"enum\":[\"" + appState + "\"]"),
                 "committed AppState must not remain queryable");
-        check(toolNames(next).contains("inspect_change"),
+        check(toolNames(next).contains("inspect_deal_change"),
                 "the missing initialState body must remain inspectable");
         check(stringField(input, "stageObjective").contains("initialState"),
                 "partial bootstrap must identify the one missing unit");

@@ -9,14 +9,14 @@ The production architecture is:
 
 ```text
 user request
-  -> compact Agent Surface v3 (`inspect_change`, `patch_repair_slot`)
+  -> compact Agent Surface v3 (`inspect_deal_change`, `inspect_deal_ui_change`, `patch_repair_slot`)
   -> model inspect/edit tools
   -> stateless DEAL / Deal UI Compiler Protocol v2
   -> checked app.deal + app.dealui
 ```
 
 The model sees short revision-local aliases such as `S3`, `B7`, `V1` and `U12`, not full semantic
-graphs or opaque compiler ids. `inspect_change` asks the compiler for one dependency cone and unlocks
+graphs or opaque compiler ids. The artifact-specific inspect tools ask the compiler for one dependency cone and unlock
 only the write operations for its edit slices. Every write carries the source digest and target
 fingerprints captured by the engine. Failed transactions preserve the canonical sources byte for
 byte; transport retries do not spend semantic repair budget.
