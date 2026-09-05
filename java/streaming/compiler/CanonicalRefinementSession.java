@@ -2050,6 +2050,7 @@ public final class CanonicalRefinementSession {
                                 "type", property.type(),
                                 "optional", property.optional())).toList(),
                         "children", component.children(),
+                        "parent", component.parent(),
                         "events", component.events(),
                         "capabilities", component.capabilities())).toList(),
                 "tokens", snapshot.tokens());
