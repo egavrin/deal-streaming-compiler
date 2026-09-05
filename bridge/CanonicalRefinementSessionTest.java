@@ -112,6 +112,8 @@ public final class CanonicalRefinementSessionTest {
                 "the Deal UI contract must publish the exact collection syntax");
         check(initial.contains("Do not finish an interactive request with zero actions"),
                 "the generation surface must keep request fidelity explicit at completion");
+        check(initial.contains("never place the\\nmarker after the opening brace"),
+                "the surface must publish exact framework marker placement");
         String view = uiViewAlias(dealAccepted, "App");
         String uiWrite = session.acceptToolCallJson(
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
