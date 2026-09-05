@@ -27,8 +27,9 @@ must never affect correctness or become persisted application state.
 
 The rich compiler API is never copied wholesale into a model prompt. For each turn,
 streaming-compiler derives a compact, versioned Agent Surface containing short revision-local aliases,
-minimum summaries and only the operations relevant to the current step. A model must query an alias
-before a write operation for that target appears. The engine resolves aliases to compiler-issued
+minimum summaries and only the operations relevant to the current step. A model calls
+`inspect_change` with aliases and operation kinds; the compiler derives the dependency cone before a
+write operation appears. The engine resolves aliases to compiler-issued
 `SymbolId` and revision-scoped `NodeId` internally and supplies the compiler-issued target fingerprint
 as a transaction precondition. Aliases expire whenever either canonical source changes.
 Structural Deal UI work queries a compiler-owned document alias before `addView`; view removal and
@@ -51,9 +52,10 @@ sequential: DEAL first, exact AppInterface second, Deal UI third. UI-only refine
 DEAL; private DEAL changes do not regenerate Deal UI; public interface changes update only affected
 UI nodes. The final source pair is fully checked and published atomically.
 
-Repair remains scoped to the compiler-rejected symbol, block or UI node. Accepted unrelated units
-are absent from the writable schema and preserve their digests. Repeating an unchanged rejected
-candidate is no progress. Full-program regeneration is a deliberate fallback, not normal repair.
+Repair remains scoped to compiler-owned slots and dependency groups. Accepted unrelated slots are
+absent from the writable schema and preserve their payload digests. During repair the only model
+write is `patch_repair_slot`; its operation and target are immutable. Repeating an unchanged rejected
+payload is no progress. Full-program regeneration is a deliberate fallback, not normal repair.
 
 ## Generalization
 

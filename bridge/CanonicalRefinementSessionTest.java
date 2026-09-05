@@ -42,6 +42,7 @@ public final class CanonicalRefinementSessionTest {
     private CanonicalRefinementSessionTest() {}
 
     public static void main(String[] args) {
+        inspectChangeUnlocksCompilerOwnedCone();
         rejectedDealBodyNarrowsRepairAndRollsForward();
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
@@ -60,6 +61,33 @@ public final class CanonicalRefinementSessionTest {
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
+    private static void inspectChangeUnlocksCompilerOwnedCone() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Increment by two", 4, 1);
+        String initial = session.nextRequestJson();
+        check(toolNames(initial).contains("inspect_change")
+                        && toolNames(initial).stream().noneMatch(value -> value.startsWith("query_")),
+                "the initial agent surface must expose compiler-owned change inspection without query tools");
+        String update = dealSymbolAlias(initial, "update");
+        String body = dealBodyAlias(initial, update);
+        String write = session.acceptToolCallJson("inspect_change", CompilerProtocolJson.encode(Map.of(
+                "artifact", "deal",
+                "anchors", List.of(body),
+                "requestedOperations", List.of("replaceFunctionBody"))));
+        check(toolNames(write).contains("apply_deal_changes"),
+                "inspect_change must unlock the operation issued by the compiler cone");
+        check(!toolNames(write).contains("inspect_change"),
+                "write phase must not retain the inspection tool");
+        check(write.contains("coneFingerprint"),
+                "the compact context must include the compiler cone fingerprint");
+        String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+                "operation", "replaceFunctionBody",
+                "target", body,
+                "body", "return {title: state.title, count: state.count + 2};"), true));
+        check(booleanField(object(result), "accepted"),
+                "a transaction unlocked by inspect_change must compile");
+    }
+
     private static void greenfieldBuildsDealBeforeDealUi() {
         var session = CanonicalRefinementSession.greenfield(
                 PACK, "./ui.pack", "Create a counter", 6, 2);
@@ -70,8 +98,8 @@ public final class CanonicalRefinementSessionTest {
                 "greenfield generation must start with DEAL");
         check(!toolNames(initial).contains("query_deal_ui_view"),
                 "Deal UI must stay hidden until DEAL is accepted");
-        check(toolNames(initial).contains("query_deal_module"),
-                "greenfield bootstrap must permit supporting nominal record declarations");
+        check(toolNames(initial).contains("inspect_change"),
+                "greenfield bootstrap must expose compiler-owned change inspection");
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
@@ -149,7 +177,7 @@ public final class CanonicalRefinementSessionTest {
                 CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
         check(stringField(input, "requiredArtifact").equals("deal"),
                 "final=false must keep complex greenfield generation in DEAL");
-        check(toolNames(next).contains("query_deal_module"),
+        check(toolNames(next).contains("inspect_change"),
                 "the next DEAL revision must expose a fresh compiler surface");
         check(!toolNames(next).contains("query_deal_symbol"),
                 "completed bootstrap declarations must become read-only index entries");
@@ -173,7 +201,7 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI must remain hidden until DEAL final=true");
         String ui = session.acceptToolCallJson(
                 "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
-        check(toolNames(ui).contains("query_deal_ui_view"),
+        check(toolNames(ui).contains("inspect_change"),
                 "finish_deal must expose Deal UI without another DEAL mutation");
     }
 
@@ -195,8 +223,8 @@ public final class CanonicalRefinementSessionTest {
                 "partial bootstrap must not unlock unrelated declarations");
         check(!next.contains("\"enum\":[\"" + appState + "\"]"),
                 "committed AppState must not remain queryable");
-        check(toolNames(next).contains("query_deal_node"),
-                "the missing initialState body must remain queryable");
+        check(toolNames(next).contains("inspect_change"),
+                "the missing initialState body must remain inspectable");
         check(stringField(input, "stageObjective").contains("initialState"),
                 "partial bootstrap must identify the one missing unit");
     }
@@ -339,24 +367,22 @@ public final class CanonicalRefinementSessionTest {
                 "operation", "replaceFunctionBody",
                 "target", body,
                 "body", "return missing;"), true));
-        check(repairRequest.contains("apply_deal_changes"), "repair must retain the rejected transaction tool");
+        check(repairRequest.contains("patch_repair_slot"), "repair must expose only the rejected slot tool");
+        check(!repairRequest.contains("apply_deal_changes"), "repair must hide the broad transaction tool");
         check(!repairRequest.contains("query_deal_symbol"), "repair must hide unrelated query tools");
         check(repairRequest.contains("return missing"), "repair context must retain the rejected body");
-        check(repairRequest.contains("\"not\":{\"const\":\"return missing;\"}"),
-                "repair schema must exclude the exact rejected payload");
-        String repeated = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
-                "operation", "replaceFunctionBody",
-                "target", body,
-                "body", "return missing;"), true));
+        check(repairRequest.contains("activeSlot") && repairRequest.contains("R1"),
+                "repair context must use a compiler-owned slot identity");
+        String repeated = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
+                "slot", "R1", "payload", Map.of("body", "return missing;"))));
         CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repeated), "semanticRepairs");
         check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
                 "a byte-identical retry must not consume another semantic repair");
         check(repeated.contains("compiler_no_progress"),
                 "an identical retry must receive an explicit compiler-owned no-progress result");
-        String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
-                "operation", "replaceFunctionBody",
-                "target", body,
-                "body", "return {title: state.title, count: state.count + 2};"), true));
+        String result = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
+                "slot", "R1", "payload", Map.of(
+                        "body", "return {title: state.title, count: state.count + 2};"))));
         CanonicalJson.Obj object = object(result);
         check(booleanField(object, "accepted"), "repaired canonical revision must be accepted");
         check(stringField(object, "deal").contains("count + 2"), "accepted source must contain local repair");

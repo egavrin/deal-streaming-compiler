@@ -1,9 +1,14 @@
 package streaming.compiler;
 
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
+import deal.compiler.CompilerProtocol.ChangeInspection;
 import deal.compiler.CompilerProtocol;
 import deal.compiler.CompilerProtocol.OperationDescriptor;
 import deal.compiler.CompilerProtocol.RepairScope;
+import deal.compiler.CompilerProtocol.RepairSlot;
+import deal.compiler.CompilerProtocol.RepairSlotStatus;
+import deal.compiler.CompilerProtocol.RepairWorkspaceSnapshot;
+import deal.compiler.CompilerProtocol.SlotPatch;
 import deal.compiler.CompilerProtocol.SemanticId;
 import deal.compiler.CompilerProtocol.SemanticSlice;
 import deal.compiler.CompilerProtocol.StructuredDiagnostic;
@@ -28,13 +33,13 @@ public final class CanonicalRefinementSession {
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
-            target alias, then submit one small atomic transaction using only operations unlocked by
-            that query. Never regenerate an unrelated unit. Compiler diagnostics and writable repair
+            change through inspect_change, then submit one small atomic transaction using only operations unlocked by
+            the compiler-owned dependency cone. Never regenerate an unrelated unit. Compiler diagnostics and writable repair
             scopes are authoritative. Use no scenario templates. Set final to false only when another
             behavior or visual transaction is required. The surface has distinct inspect and edit
-            phases. In the inspect phase call query tools directly and batch every required query in
-            that provider turn. In the edit phase call the single write tool directly; never put a
-            query operation inside a ChangeSet. Emit exactly one write tool call.
+            phases. In the inspect phase call inspect_change once with every required semantic anchor
+            and operation kind. In the edit phase call the single write tool directly. Emit exactly
+            one write tool call.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             Inspecting a DEAL symbol or body also unlocks adding a new sibling declaration when the
@@ -60,14 +65,14 @@ public final class CanonicalRefinementSession {
             """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
-            compiler surface. Query the DEAL module and bootstrap declarations, then submit one
+            compiler surface. Inspect the DEAL module and bootstrap declarations, then submit one
             cohesive atomic transaction. Emit exactly one write tool call; read-only queries may
             be batched. Set final=true only when behavior is complete. For a complex application,
             set final=false, inspect the new revision, and continue with another small transaction.
             Never return prose.
             Obey generationStage. In bootstrap, replace AppState and initialState and add any
             field-only nominal record types referenced by AppState in the same atomic ChangeSet.
-            Query the module together with both bootstrap units before that write. Every collection
+            Inspect the module together with both bootstrap units before that write. Every collection
             rendered as repeated UI must contain nominal items with a stable int or string id/key;
             shape nested visual data as keyed record collections, not primitive nested arrays. In
             app-state or initial-state, complete only the named missing bootstrap unit. In declarations, both
@@ -111,7 +116,7 @@ public final class CanonicalRefinementSession {
 
     private static final String DEAL_UI_GENERATION_SYSTEM_PROMPT = """
             Create the complete Deal UI presentation for the supplied compiler-extracted
-            AppInterface. Query the bootstrap root view, then replace its body in one atomic UI
+            AppInterface. Inspect the bootstrap root view, then replace its body in one atomic UI
             transaction and mark it final. Emit exactly one write tool call; read-only queries may
             be batched. The replacement body contains only statements inside the existing view:
             omit the view signature and outer braces. Use only operations in the current tool
@@ -152,6 +157,11 @@ public final class CanonicalRefinementSession {
     private List<StructuredDiagnostic> repairDiagnostics = List.of();
     private Map<String, String> rejectedPayloads = Map.of();
     private String rejectedAttemptFingerprint = "";
+    private RepairWorkspaceSnapshot repairWorkspace;
+    private String repairArtifact = "";
+    private boolean repairFinal;
+    private boolean repairReplacesAppState;
+    private boolean repairReplacesInitialState;
     private String forcedArtifact = "";
     private final Map<String, SemanticId> aliases = new LinkedHashMap<>();
     private final Map<String, String> aliasesById = new LinkedHashMap<>();
@@ -164,6 +174,10 @@ public final class CanonicalRefinementSession {
     private int semanticRepairs;
     private int dealSemanticRepairs;
     private int dealUiSemanticRepairs;
+    private int repairSlotsStaged;
+    private int repairSlotsPreserved;
+    private int repairSlotPatches;
+    private int maxRepairGroupWidth;
     private boolean appStateBootstrapReplaced;
     private boolean initialStateBootstrapReplaced;
     private boolean repairMustFinishDeal;
@@ -308,10 +322,12 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_view" -> queryDealUiView(string(arguments, "target"));
             case "query_deal_ui_document" -> queryDealUiDocument(string(arguments, "target"));
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
+            case "inspect_change" -> inspectChange(arguments);
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
+            case "patch_repair_slot" -> patchRepairSlot(arguments);
             case "unchanged" -> unchanged();
             default -> throw new IllegalArgumentException("Unsupported streaming-compiler tool: " + name);
         }
@@ -319,6 +335,7 @@ public final class CanonicalRefinementSession {
 
     private static boolean isReadOnlyQuery(String name) {
         return name.equals("query_deal_module")
+                || name.equals("inspect_change")
                 || name.equals("query_deal_symbol")
                 || name.equals("query_deal_node")
                 || name.equals("query_deal_ui_document")
@@ -335,6 +352,11 @@ public final class CanonicalRefinementSession {
         result.put("dealUi", status == Status.COMPLETE ? dealUi : previousDealUi);
         result.put("rounds", rounds);
         result.put("semanticRepairs", semanticRepairs);
+        result.put("repairMetrics", Map.of(
+                "slotsStaged", repairSlotsStaged,
+                "slotsPreserved", repairSlotsPreserved,
+                "slotPatches", repairSlotPatches,
+                "maxDependencyGroupWidth", maxRepairGroupWidth));
         result.put("protocolVersion", CompilerProtocol.VERSION);
         result.put("surfaceVersion", CompilerProtocol.AGENT_SURFACE_VERSION);
         result.put("protocolMode", "v2-with-v1-shadow");
@@ -356,6 +378,26 @@ public final class CanonicalRefinementSession {
             context.put("componentPack", compactComponentPack());
         }
         context.put("previousToolResults", agentTranscript());
+        if (repairWorkspace != null) {
+            RepairSlot active = repairWorkspace.slots().stream()
+                    .filter(value -> value.status() == RepairSlotStatus.REJECTED)
+                    .findFirst().orElseThrow();
+            context.put("repairWorkspace", Map.of(
+                    "artifact", repairArtifact,
+                    "round", repairWorkspace.repairRound(),
+                    "activeSlot", Map.of(
+                            "slot", active.slotId(),
+                            "operation", active.operation(),
+                            "payload", agentRepairPayload(active),
+                            "diagnostics", compactDiagnostics(active.diagnostics())),
+                    "preservedSlots", repairWorkspace.slots().stream()
+                            .filter(value -> value.status() != RepairSlotStatus.REJECTED)
+                            .map(value -> Map.of(
+                                    "slot", value.slotId(),
+                                    "status", value.status().name(),
+                                    "payloadFingerprint", value.payloadFingerprint()))
+                            .toList()));
+        }
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!repairDiagnostics.isEmpty()) {
             context.put("repairDirective", Map.of(
@@ -372,31 +414,12 @@ public final class CanonicalRefinementSession {
     }
 
     private List<Map<String, Object>> tools() {
+        if (repairWorkspace != null) return List.of(repairSlotTool());
         List<Map<String, Object>> result = new ArrayList<>();
         boolean repairing = !repairScopes.isEmpty();
         boolean writeUnlocked = !dealGrants.isEmpty() || !dealUiGrants.isEmpty();
-        if (!repairing && !writeUnlocked && !forcedArtifact.equals("dealui")) {
-            boolean bootstrapComplete = appStateBootstrapReplaced && initialStateBootstrapReplaced;
-            if (!generation || bootstrapComplete || generationStage().equals("bootstrap")) {
-                addQueryTool(result, "query_deal_module", "Unlock adding a new top-level DEAL declaration.", "M");
-            }
-            if (!generation) {
-                addQueryTool(result, "query_deal_symbol", "Read one DEAL declaration and dependency summary.", "S");
-                addQueryTool(result, "query_deal_node", "Read one DEAL function or block body.", "B");
-            } else if (!bootstrapComplete) {
-                List<String> symbolTargets = new ArrayList<>();
-                if (!appStateBootstrapReplaced) symbolTargets.add(symbolAlias("AppState"));
-                addQueryTool(result, "query_deal_symbol", "Read the missing bootstrap declaration.", symbolTargets);
-                if (!initialStateBootstrapReplaced) {
-                    addQueryTool(result, "query_deal_node", "Read the missing initialState body.",
-                            nodeAliases("initialState"));
-                }
-            }
-        }
-        if (!repairing && !writeUnlocked && !forcedArtifact.equals("deal") && inspection.dealUi() != null) {
-            addQueryTool(result, "query_deal_ui_view",
-                    "Read one complete Deal UI view; this also unlocks adding a sibling view when needed.", "V");
-            addQueryTool(result, "query_deal_ui_node", "Read one Deal UI subtree and its bindings.", "U");
+        if (!repairing && !writeUnlocked) {
+            result.add(inspectChangeTool());
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
         if (generation && generationStage().equals("bootstrap") && foundationReady()) {
@@ -438,6 +461,78 @@ public final class CanonicalRefinementSession {
         return List.copyOf(result);
     }
 
+    private Map<String, Object> inspectChangeTool() {
+        List<String> artifacts = new ArrayList<>();
+        if (!forcedArtifact.equals("dealui")) artifacts.add("deal");
+        if (!forcedArtifact.equals("deal") && inspection.dealUi() != null) artifacts.add("dealui");
+        if (artifacts.isEmpty()) artifacts.add(forcedArtifact);
+        List<String> targets = new ArrayList<>();
+        if (artifacts.contains("deal")) {
+            targets.addAll(aliases("M"));
+            targets.addAll(aliases("S"));
+            targets.addAll(aliases("B"));
+        }
+        if (artifacts.contains("dealui")) {
+            targets.addAll(aliases("D"));
+            targets.addAll(aliases("V"));
+            targets.addAll(aliases("U"));
+        }
+        List<String> operations = new ArrayList<>();
+        if (artifacts.contains("deal")) operations.addAll(List.of(
+                DealCompilerWorkspace.ADD_DECLARATION,
+                DealCompilerWorkspace.REMOVE_DECLARATION,
+                DealCompilerWorkspace.REPLACE_DECLARATION,
+                DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                DealCompilerWorkspace.REPLACE_BLOCK_BODY));
+        if (artifacts.contains("dealui")) operations.addAll(List.of(
+                UiCompilerWorkspace.ADD_VIEW,
+                UiCompilerWorkspace.REMOVE_VIEW,
+                UiCompilerWorkspace.REPLACE_VIEW_BODY,
+                UiCompilerWorkspace.REPLACE_SUBTREE,
+                UiCompilerWorkspace.INSERT_CHILD,
+                UiCompilerWorkspace.REMOVE_NODE,
+                UiCompilerWorkspace.MOVE_NODE,
+                UiCompilerWorkspace.SET_PROPERTY));
+        return tool("inspect_change",
+                "Select semantic anchors and operation kinds. The compiler derives the minimum dependency cone and writable surface.",
+                objectSchema(Map.of(
+                        "artifact", artifacts.size() == 1
+                                ? constantString(artifacts.get(0)) : enumSchema(artifacts),
+                        "anchors", Map.of(
+                                "type", "array", "minItems", 1, "uniqueItems", true,
+                                "items", enumSchema(targets)),
+                        "requestedOperations", Map.of(
+                                "type", "array", "minItems", 1, "uniqueItems", true,
+                                "items", enumSchema(operations)))));
+    }
+
+    private Map<String, Object> repairSlotTool() {
+        List<RepairSlot> rejected = repairWorkspace.slots().stream()
+                .filter(value -> value.status() == RepairSlotStatus.REJECTED).toList();
+        if (rejected.isEmpty()) throw new IllegalStateException("Repair workspace has no rejected slot");
+        RepairSlot active = rejected.get(0);
+        Set<String> fields = new LinkedHashSet<>(active.payload().keySet());
+        Map<String, Object> payloadProperties = new LinkedHashMap<>();
+        fields.forEach(field -> payloadProperties.put(field, switch (field) {
+            case "index" -> Map.of("type", "integer", "minimum", 0);
+            case "newParentId" -> enumSchema(aliases("U"));
+            default -> Map.of(
+                    "type", "string",
+                    "description", "Complete replacement for the rejected " + field + " payload");
+        }));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("type", "object");
+        payload.put("additionalProperties", false);
+        payload.put("properties", payloadProperties);
+        payload.put("required", List.copyOf(fields));
+        return tool(
+                "patch_repair_slot",
+                "Patch one compiler-rejected slot. The operation, target and accepted siblings are immutable.",
+                objectSchema(Map.of(
+                        "slot", constantString(active.slotId()),
+                        "payload", payload)));
+    }
+
     private boolean foundationReady() {
         SemanticId module = inspection.deal().moduleId();
         SemanticId appState = inspection.deal().symbols().stream()
@@ -468,7 +563,7 @@ public final class CanonicalRefinementSession {
 
     private String generationStageObjective() {
         return switch (generationStage()) {
-            case "bootstrap" -> "Query the module and both bootstrap units. In one transaction add supporting field-only record types, replace AppState, and replace initialState; continue with final=false.";
+            case "bootstrap" -> "Inspect the module and both bootstrap units. In one transaction add supporting field-only record types, replace AppState, and replace initialState; continue with final=false.";
             case "app-state" -> "Replace only the missing AppState declaration; do not add or redeclare it.";
             case "initial-state" -> "Replace only the missing initialState body; do not redeclare AppState.";
             case "declarations" -> "AppState and initialState are committed. Add only missing unique action, helper, and handler declarations. If existing behavior is complete, call finish_deal immediately.";
@@ -579,6 +674,54 @@ public final class CanonicalRefinementSession {
         forcedArtifact = "deal";
     }
 
+    private void inspectChange(CanonicalJson.Obj arguments) {
+        String artifact = string(arguments, "artifact");
+        List<String> anchorAliases = stringArray(arguments, "anchors");
+        List<String> requestedOperations = stringArray(arguments, "requestedOperations");
+        if (!artifact.equals("deal") && !artifact.equals("dealui")) {
+            throw new IllegalArgumentException("inspect_change artifact must be deal or dealui");
+        }
+        boolean wrongAlias = anchorAliases.stream().anyMatch(value -> artifact.equals("deal")
+                ? !(value.startsWith("M") || value.startsWith("S") || value.startsWith("B"))
+                : !(value.startsWith("D") || value.startsWith("V") || value.startsWith("U")));
+        if (wrongAlias) throw new IllegalArgumentException("inspect_change anchor belongs to another artifact");
+        List<SemanticId> anchors = anchorAliases.stream()
+                .map(value -> resolveAlias(value, null)).toList();
+        ChangeInspection change = artifact.equals("deal")
+                ? CanonicalCompiler.inspectDealChange(
+                        deal, inspection.deal().sourceDigest(), anchors, requestedOperations)
+                : CanonicalCompiler.inspectDealUiChange(
+                        deal, dealUi, pack, packSpecifier,
+                        inspection.dealUi().sourceDigest(), anchors, requestedOperations);
+        if (!change.diagnostics().isEmpty()) {
+            throw new IllegalArgumentException("Compiler rejected inspect_change: "
+                    + compactDiagnostics(change.diagnostics()));
+        }
+        if (artifact.equals("deal")) grant(dealGrants, change.allowedOperations());
+        else grant(dealUiGrants, change.allowedOperations());
+        queriedAliases.addAll(anchorAliases);
+        addTranscript("inspect_change", Map.of(
+                "artifact", artifact,
+                "coneFingerprint", change.dependencyCone().fingerprint(),
+                "anchors", anchorAliases,
+                "context", change.editSlices().stream().map(slice -> Map.of(
+                        "target", aliasesById.getOrDefault(slice.ownerId().value(), "dependency"),
+                        "kind", slice.kind(),
+                        "source", slice.source(),
+                        "dependencies", slice.dependencies().stream()
+                                .map(value -> aliasesById.getOrDefault(value.value(), "dependency"))
+                                .toList())).toList(),
+                "requiredDependencies", change.dependencyCone().members().stream()
+                        .filter(value -> !value.exposure().equals("IMPACT_ONLY"))
+                        .map(value -> Map.of(
+                                "target", aliasesById.getOrDefault(value.id().value(), "dependency"),
+                                "kind", value.kind(),
+                                "exposure", value.exposure(),
+                                "fingerprint", value.fingerprint()))
+                        .toList()));
+        forcedArtifact = artifact;
+    }
+
     private void queryDealSymbol(String target) {
         SemanticId id = resolveAlias(target, "S");
         SemanticSlice slice = CanonicalCompiler.queryDealSymbol(deal, id);
@@ -646,16 +789,31 @@ public final class CanonicalRefinementSession {
         String beforeDigest = inspection.deal().sourceDigest();
         boolean replacesAppState = generation && operations.stream().anyMatch(this::replacesAppStateBootstrap);
         boolean replacesInitialState = generation && operations.stream().anyMatch(this::replacesInitialStateBootstrap);
-        var result = CanonicalCompiler.applyDealChangeChecked(
-                deal,
-                new ChangeSetPrecondition(inspection.deal().sourceDigest(), fingerprints(dealGrants)),
-                operations);
+        var precondition = new ChangeSetPrecondition(
+                inspection.deal().sourceDigest(), fingerprints(dealGrants));
+        var result = CanonicalCompiler.applyDealChangeChecked(deal, precondition, operations);
         if (!isPreconditionRejection(result.diagnostics())) {
             var shadow = CanonicalCompiler.applyDealChange(
                     deal, inspection.deal().sourceDigest(), operations);
             recordShadowParity("deal", shadow.accepted(), shadow.sourceDigest(), result.accepted(), result.sourceDigest());
         }
         if (!result.accepted()) {
+            boolean duplicateOnly = generation && generationStage().equals("declarations")
+                    && result.diagnostics().stream().allMatch(value -> value.code().equals("E2002"));
+            if (!duplicateOnly) {
+                ChangeInspection changeInspection = CanonicalCompiler.inspectDealChange(
+                        deal, inspection.deal().sourceDigest(),
+                        operations.stream().map(DealCompilerWorkspace.Operation::targetId).distinct().toList(),
+                        operations.stream().map(CanonicalRefinementSession::operationName).distinct().toList());
+                var staged = CanonicalCompiler.stageDealChange(
+                        deal, precondition, changeInspection, operations);
+                if (!staged.accepted() && staged.workspace().slots().stream()
+                        .anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)) {
+                    beginRepairWorkspace("deal", staged.workspace(), result.diagnostics(), finalChange,
+                            replacesAppState, replacesInitialState);
+                    return;
+                }
+            }
             reject("apply_deal_changes", result.diagnostics(), "deal", operations);
             return;
         }
@@ -783,16 +941,27 @@ public final class CanonicalRefinementSession {
         List<UiCompilerWorkspace.Operation> operations = dealUiOperations(field(arguments, "operations"));
         if (rejectRepeatedAttempt("dealui", operations)) return;
         boolean finalChange = booleanField(arguments, "final");
+        var precondition = new ChangeSetPrecondition(
+                inspection.dealUi().sourceDigest(), fingerprints(dealUiGrants));
         var result = CanonicalCompiler.applyDealUiChangeChecked(
-                deal, dealUi, pack, packSpecifier,
-                new ChangeSetPrecondition(inspection.dealUi().sourceDigest(), fingerprints(dealUiGrants)),
-                operations);
+                deal, dealUi, pack, packSpecifier, precondition, operations);
         if (!isPreconditionRejection(result.diagnostics())) {
             var shadow = CanonicalCompiler.applyDealUiChange(
                     deal, dealUi, pack, packSpecifier, inspection.dealUi().sourceDigest(), operations);
             recordShadowParity("dealui", shadow.accepted(), shadow.sourceDigest(), result.accepted(), result.sourceDigest());
         }
         if (!result.accepted()) {
+            ChangeInspection changeInspection = CanonicalCompiler.inspectDealUiChange(
+                    deal, dealUi, pack, packSpecifier, inspection.dealUi().sourceDigest(),
+                    operations.stream().map(UiCompilerWorkspace.Operation::targetId).distinct().toList(),
+                    operations.stream().map(CanonicalRefinementSession::operationName).distinct().toList());
+            var staged = CanonicalCompiler.stageDealUiChange(
+                    deal, dealUi, pack, packSpecifier, precondition, changeInspection, operations);
+            if (!staged.accepted() && staged.workspace().slots().stream()
+                    .anyMatch(value -> value.status() == RepairSlotStatus.REJECTED)) {
+                beginRepairWorkspace("dealui", staged.workspace(), result.diagnostics(), finalChange, false, false);
+                return;
+            }
             reject("apply_deal_ui_changes", result.diagnostics(), "dealui", operations);
             return;
         }
@@ -807,6 +976,147 @@ public final class CanonicalRefinementSession {
         resetSurface();
         addTranscript("apply_deal_ui_changes", Map.of("accepted", true, "impact", result.impact()));
         if (inspection.valid() && finalChange) status = Status.COMPLETE;
+    }
+
+    private void beginRepairWorkspace(
+            String artifact,
+            RepairWorkspaceSnapshot workspace,
+            List<StructuredDiagnostic> diagnostics,
+            boolean finalChange,
+            boolean replacesAppState,
+            boolean replacesInitialState) {
+        semanticRepairs++;
+        int artifactRepairs = artifact.equals("deal")
+                ? ++dealSemanticRepairs : ++dealUiSemanticRepairs;
+        addTranscript("stage_change", Map.of(
+                "accepted", false,
+                "artifact", artifact,
+                "diagnostics", compactDiagnostics(diagnostics),
+                "slots", workspace.slots().stream().map(value -> Map.of(
+                        "slot", value.slotId(),
+                        "status", value.status().name(),
+                        "payloadFingerprint", value.payloadFingerprint())).toList()));
+        if (artifactRepairs > maxSemanticRepairs) {
+            status = Status.FAILED;
+            deal = previousDeal;
+            dealUi = previousDealUi;
+            return;
+        }
+        repairWorkspace = workspace;
+        repairSlotsStaged += workspace.slots().size();
+        repairSlotsPreserved += (int) workspace.slots().stream()
+                .filter(value -> value.status() == RepairSlotStatus.SEALED
+                        || value.status() == RepairSlotStatus.STAGED).count();
+        maxRepairGroupWidth = Math.max(maxRepairGroupWidth, workspace.groups().stream()
+                .mapToInt(value -> value.slotIds().size()).max().orElse(0));
+        repairArtifact = artifact;
+        repairFinal = finalChange;
+        repairReplacesAppState = replacesAppState;
+        repairReplacesInitialState = replacesInitialState;
+        repairScopes = List.of();
+        repairDiagnostics = List.copyOf(diagnostics);
+        forcedArtifact = artifact;
+    }
+
+    private void patchRepairSlot(CanonicalJson.Obj arguments) {
+        if (repairWorkspace == null) throw new IllegalStateException("No active repair workspace");
+        String slotId = string(arguments, "slot");
+        RepairSlot slot = repairWorkspace.slots().stream()
+                .filter(value -> value.slotId().equals(slotId))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Unknown repair slot " + slotId));
+        CanonicalJson.Obj payloadObject = CompilerProtocolJson.requireObject(field(arguments, "payload"), "repair payload");
+        Map<String, String> payload = new LinkedHashMap<>();
+        payloadObject.entries().forEach(entry -> {
+            if (entry.value() instanceof CanonicalJson.Str value) payload.put(entry.key(), value.value());
+            else if (entry.value() instanceof CanonicalJson.Int value) payload.put(entry.key(), Integer.toString(value.value()));
+            else throw new IllegalArgumentException("Repair payload fields must be strings or integers");
+        });
+        if (payload.containsKey("newParentId")) {
+            payload.put("newParentId", resolveAlias(payload.get("newParentId"), "U").value());
+        }
+        if (payload.equals(slot.payload())) {
+            addTranscript("compiler_no_progress", Map.of(
+                    "artifact", repairArtifact,
+                    "slot", slotId,
+                    "payloadFingerprint", slot.payloadFingerprint()));
+            return;
+        }
+        var patch = new SlotPatch(slotId, payload);
+        repairSlotPatches++;
+        var result = repairArtifact.equals("deal")
+                ? CanonicalCompiler.patchDealRepairWorkspace(deal, repairWorkspace, List.of(patch))
+                : CanonicalCompiler.patchDealUiRepairWorkspace(
+                        deal, dealUi, pack, packSpecifier, repairWorkspace, List.of(patch));
+        if (!result.accepted()) {
+            semanticRepairs++;
+            if (repairArtifact.equals("deal")) dealSemanticRepairs++;
+            else dealUiSemanticRepairs++;
+            repairWorkspace = result.workspace();
+            repairDiagnostics = result.diagnostics();
+            addTranscript("patch_repair_slot", Map.of(
+                    "accepted", false,
+                    "slot", slotId,
+                    "diagnostics", compactDiagnostics(result.diagnostics())));
+            if ((repairArtifact.equals("deal") ? dealSemanticRepairs : dealUiSemanticRepairs) > maxSemanticRepairs) {
+                status = Status.FAILED;
+                deal = previousDeal;
+                dealUi = previousDealUi;
+            }
+            return;
+        }
+        if (repairArtifact.equals("deal")) completeDealRepair(result);
+        else completeDealUiRepair(result);
+    }
+
+    private void completeDealRepair(deal.compiler.CompilerProtocol.RepairWorkspaceResult result) {
+        var change = (deal.compiler.CompilerProtocol.ChangeResult) result.change();
+        deal = result.source();
+        appStateBootstrapReplaced |= repairReplacesAppState;
+        initialStateBootstrapReplaced |= repairReplacesInitialState;
+        boolean finalChange = repairFinal;
+        clearRepairWorkspace();
+        dealSemanticRepairs = 0;
+        forcedArtifact = generation
+                ? finalChange ? "dealui" : "deal"
+                : change.impact().interfaceChanged() ? "dealui" : "";
+        inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
+        resetSurface();
+        if (generation && finalChange) transcript.clear();
+        else addTranscript("patch_repair_slot", Map.of("accepted", true, "impact", change.impact()));
+        if (!generation && change.impact().interfaceChanged()) unlockRootViewAfterInterfaceChange();
+        if (inspection.valid() && finalChange && forcedArtifact.isEmpty()) status = Status.COMPLETE;
+    }
+
+    private void completeDealUiRepair(deal.compiler.CompilerProtocol.RepairWorkspaceResult result) {
+        var change = (UiCompilerWorkspace.UiChangeResult) result.change();
+        dealUi = result.source();
+        boolean finalChange = repairFinal;
+        clearRepairWorkspace();
+        dealUiSemanticRepairs = 0;
+        forcedArtifact = "";
+        inspection = CanonicalCompiler.compileCanonicalApp(deal, dealUi, pack, packSpecifier);
+        resetSurface();
+        addTranscript("patch_repair_slot", Map.of("accepted", true, "impact", change.impact()));
+        if (inspection.valid() && finalChange) status = Status.COMPLETE;
+    }
+
+    private void clearRepairWorkspace() {
+        repairWorkspace = null;
+        repairArtifact = "";
+        repairFinal = false;
+        repairReplacesAppState = false;
+        repairReplacesInitialState = false;
+        repairScopes = List.of();
+        repairDiagnostics = List.of();
+        clearRejectedAttempt();
+    }
+
+    private Map<String, String> agentRepairPayload(RepairSlot slot) {
+        Map<String, String> result = new LinkedHashMap<>(slot.payload());
+        if (result.containsKey("newParentId")) {
+            result.put("newParentId", aliasesById.getOrDefault(result.get("newParentId"), "unavailable"));
+        }
+        return Map.copyOf(result);
     }
 
     private void reject(
@@ -1325,6 +1635,14 @@ public final class CanonicalRefinementSession {
 
     private static String string(CanonicalJson.Obj object, String name) {
         return CompilerProtocolJson.stringField(object, name);
+    }
+
+    private static List<String> stringArray(CanonicalJson.Obj object, String name) {
+        CanonicalJson.Arr values = CompilerProtocolJson.requireArray(field(object, name), name);
+        return values.items().stream().map(value -> {
+            if (value instanceof CanonicalJson.Str text) return text.value();
+            throw new IllegalArgumentException("Protocol field '" + name + "' must contain strings");
+        }).toList();
     }
 
     private static int integer(CanonicalJson.Obj object, String name) {
