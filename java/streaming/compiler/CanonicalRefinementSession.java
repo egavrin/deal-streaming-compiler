@@ -943,6 +943,15 @@ public final class CanonicalRefinementSession {
         if (wrongAlias) throw new IllegalArgumentException("inspect anchor belongs to another artifact");
         List<SemanticId> anchors = anchorAliases.stream()
                 .map(value -> resolveAlias(value, null)).toList();
+        if (artifact.equals("deal") && selectsStateEvolution(anchors)) {
+            LinkedHashSet<String> cohesiveOperations = new LinkedHashSet<>(requestedOperations);
+            cohesiveOperations.add(DealCompilerWorkspace.REPLACE_DECLARATION);
+            cohesiveOperations.add(DealCompilerWorkspace.REPLACE_FUNCTION_BODY);
+            if (anchors.contains(inspection.deal().moduleId())) {
+                cohesiveOperations.add(DealCompilerWorkspace.ADD_DECLARATION);
+            }
+            requestedOperations = List.copyOf(cohesiveOperations);
+        }
         ChangeInspection change = artifact.equals("deal")
                 ? CanonicalCompiler.inspectDealChange(
                         deal, inspection.deal().sourceDigest(), anchors, requestedOperations)
@@ -960,6 +969,7 @@ public final class CanonicalRefinementSession {
                 "artifact", artifact,
                 "coneFingerprint", change.dependencyCone().fingerprint(),
                 "anchors", anchorAliases,
+                "requestedOperations", requestedOperations,
                 "context", change.editSlices().stream().map(slice -> Map.of(
                         "target", aliasesById.getOrDefault(slice.ownerId().value(), "dependency"),
                         "kind", slice.kind(),
@@ -976,6 +986,18 @@ public final class CanonicalRefinementSession {
                                 "fingerprint", value.fingerprint()))
                         .toList()));
         forcedArtifact = artifact;
+    }
+
+    private boolean selectsStateEvolution(List<SemanticId> anchors) {
+        SemanticId appState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("AppState"))
+                .map(SymbolSnapshot::id).findFirst().orElse(null);
+        SemanticId initialState = inspection.deal().symbols().stream()
+                .filter(symbol -> symbol.name().equals("initialState"))
+                .map(SymbolSnapshot::id).findFirst().orElse(null);
+        if (appState == null || initialState == null || !anchors.contains(appState)) return false;
+        return anchors.contains(initialState) || inspection.deal().nodes().stream().anyMatch(node ->
+                node.ownerId().equals(initialState) && anchors.contains(node.id()));
     }
 
     private void queryDealSymbol(String target) {

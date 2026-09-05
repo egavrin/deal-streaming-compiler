@@ -337,9 +337,8 @@ public final class CanonicalRefinementSessionTest {
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
         String write = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
-                "anchors", List.of("M1", appState, initialBody),
-                "requestedOperations", List.of(
-                        "addDeclaration", "replaceDeclaration", "replaceFunctionBody"))));
+                "anchors", List.of("M1", appState, initialState),
+                "requestedOperations", List.of("addDeclaration", "replaceFunctionBody"))));
         check(toolNames(write).contains("evolve_deal_state"),
                 "a root-state schema cone must expose one cohesive state-evolution tool");
         check(!toolNames(write).contains("apply_deal_changes"),
