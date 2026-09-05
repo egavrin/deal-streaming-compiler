@@ -55,6 +55,8 @@ public final class CanonicalRefinementSession {
             Every action handler declaration must literally start with // @ui-update on the line immediately
             before export function, take (state: AppState, action: SomeAction), and return a complete AppState.
             Mutation is allowed only on fresh locals; state and action parameters are borrowed.
+            DEAL has no number-to-string conversion. Keep numeric state numeric and let Deal UI
+            render it with typed numeric components such as IntText instead of concatenating labels.
             """;
     private static final String DEAL_UI_EDIT_CONTRACT = """
 
@@ -105,6 +107,8 @@ public final class CanonicalRefinementSession {
             Use int for integral values and defaults; a number default requires 0.0. Construct
             records with context-typed object literals such as {count: 0}; DEAL has no new operator.
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
+            Keep dynamic numeric values as int or number fields. DEAL has no number-to-string
+            conversion; Deal UI formats numeric state with typed components such as ui.IntText.
             Use integer platform helpers only when listed by the host contract.
             Every state/action-to-state handler must include // @ui-update immediately before its
             export function declaration inside the same declaration string. Such a handler has
@@ -1208,9 +1212,14 @@ public final class CanonicalRefinementSession {
                         : value.message() + "; required: " + value.expected() + "; rejected: " + value.actual())
                 .distinct()
                 .collect(java.util.stream.Collectors.joining(" | "));
+        boolean numericStringMix = slot.diagnostics().stream()
+                .anyMatch(value -> value.code().equals("E3010"));
         return "Complete replacement for field " + field + " of " + slot.operation()
                 + " on compiler target " + alias(slot.targetId())
                 + ". It must differ from the rejected payload"
+                + (numericStringMix
+                        ? ". Do not concatenate string and numeric values; preserve numeric state for typed UI formatting"
+                        : "")
                 + (contract.isBlank() ? "." : ". " + contract);
     }
 

@@ -58,7 +58,33 @@ public final class CanonicalRefinementSessionTest {
         greenfieldNoOpBecomesScopedRepair();
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
+        numericStringRepairExplainsTypedUiFormatting();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void numericStringRepairExplainsTypedUiFormatting() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create an interactive progress counter", 6, 2);
+        String initial = session.nextRequestJson();
+        String foundation = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { label: string = \"\"; count: int = 0; }",
+                "initialStateBody", "return {label: \"Ready\", count: 0};")));
+        check(toolNames(foundation).contains("append_deal_behavior"),
+                "valid foundation must advance to behavior");
+        String repair = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class IncrementAction {}",
+                        "handlerDeclaration", "// @ui-update\n"
+                                + "export function increment(state: AppState, action: IncrementAction): AppState { "
+                                + "return {label: \"Count: \" + (state.count + 1), count: state.count + 1}; }")),
+                "final", true)));
+        check(toolNames(repair).contains("patch_repair_slot"),
+                "mixed numeric/string behavior must enter a narrow repair slot");
+        check(repair.contains("preserve numeric state for typed UI formatting")
+                        && repair.contains("no implicit coercion"),
+                "repair surface must explain the supported representation instead of repeating E3010: " + repair);
     }
 
     private static void inspectChangeUnlocksCompilerOwnedCone() {
