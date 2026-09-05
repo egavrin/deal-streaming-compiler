@@ -80,6 +80,8 @@ public final class CanonicalRefinementSessionTest {
                 Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")))));
         check(toolNames(foundationRequest).contains("apply_deal_foundation"),
                 "bootstrap must collapse rich ChangeSet operations into one compact agent handle");
+        check(foundationRequest.contains("stable unique id"),
+                "bootstrap record declarations must expose the cross-artifact ForEach key contract");
         check(!toolNames(foundationRequest).contains("apply_deal_changes"),
                 "bootstrap must not expose the generic operation union");
         String declarations = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(

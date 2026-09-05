@@ -401,7 +401,8 @@ public final class CanonicalRefinementSession {
                             "supportingDeclarations", Map.of(
                                     "type", "array",
                                     "items", Map.of("type", "string", "description",
-                                            "One complete unique field-only class declaration. Use int, not number, for integral fields and defaults")),
+                                            "One complete unique field-only class declaration. Use int, not number, for integral fields and defaults. "
+                                                    + "A record stored in an AppState array must include a stable unique id: int or key: string field for ForEach")),
                             "appStateDeclaration", Map.of("type", "string", "description",
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
                             "initialStateBody", Map.of("type", "string", "description",
