@@ -1487,6 +1487,11 @@ public final class CanonicalRefinementSession {
                 .anyMatch(value -> value.code().equals("UI2031")
                         && value.expected().contains("string")
                         && (value.actual().contains("int") || value.actual().contains("number")));
+        boolean uiNumericStringOperation = slot.diagnostics().stream()
+                .anyMatch(value -> value.code().equals("UI2020")
+                        && (value.message().contains("string")
+                                || value.expected().contains("string")
+                                || value.actual().contains("string")));
         boolean functionBody = field.equals("body");
         return "Complete replacement for field " + field + " of " + slot.operation()
                 + " on compiler target " + alias(slot.targetId())
@@ -1502,6 +1507,9 @@ public final class CanonicalRefinementSession {
                         : "")
                 + (uiStringTypeMismatch
                         ? ". Fix the expression at the diagnostic range with a typed numeric component. For int state use ui.IntText or ui.IntStat instead of ui.Text, ui.Stat, or an empty string placeholder; preserve unrelated nodes byte-for-byte"
+                        : "")
+                + (uiNumericStringOperation
+                        ? ". Scan the complete replacement for every numeric + string expression, not only the first reported range. Never concatenate numeric state into Text, labels, subtitles, suffixes, prefixes, or accessibility strings. Render each dynamic int with ui.IntText/ui.IntStat/ui.IntListItem, place adjacent static text in a separate ui.Text, and keep every unrelated node byte-for-byte"
                         : "")
                 + (contract.isBlank() ? "." : ". " + contract);
     }

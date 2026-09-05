@@ -63,6 +63,7 @@ public final class CanonicalRefinementSessionTest {
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
+        numericUiConcatenationRequestsWholeBodyCleanup();
         emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
         rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings();
         greenfieldBehaviorBatchesAreCompilerBounded();
@@ -182,6 +183,27 @@ public final class CanonicalRefinementSessionTest {
         check(repair.contains("preserve numeric state for typed UI formatting")
                         && repair.contains("no implicit coercion"),
                 "repair surface must explain the supported representation instead of repeating E3010: " + repair);
+    }
+
+    private static void numericUiConcatenationRequestsWholeBodyCleanup() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Show a compact count summary", 5, 2);
+        String initial = session.nextRequestJson();
+        String app = uiViewAlias(initial, "App");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(app),
+                "requestedOperations", List.of("replaceViewBody"))));
+        String repair = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
+                "operation", "replaceViewBody",
+                "target", app,
+                "body", "ui.Column() { ui.Text(value: state.count + \" items\") "
+                        + "ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) }"), true));
+        check(toolNames(repair).contains("patch_repair_slot"),
+                "numeric UI concatenation must enter compiler-owned repair");
+        check(repair.contains("Scan the complete replacement for every numeric + string expression")
+                        && repair.contains("Never concatenate numeric state")
+                        && repair.contains("ui.IntText"),
+                "the repair contract must prevent one-error-at-a-time whole-view retries: " + repair);
     }
 
     private static void emptyArrayRepairPublishesAConstrainedFunctionBodyContract() {
