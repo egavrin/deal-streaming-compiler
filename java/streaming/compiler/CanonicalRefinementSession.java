@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v4";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v5";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -189,6 +189,7 @@ public final class CanonicalRefinementSession {
     private Map<String, String> rejectedPayloads = Map.of();
     private String rejectedAttemptFingerprint = "";
     private RepairWorkspaceSnapshot repairWorkspace;
+    private UiCompilerWorkspace.UiEditSurface uiEditSurface;
     private String repairArtifact = "";
     private boolean repairFinal;
     private boolean repairReplacesAppState;
@@ -410,16 +411,20 @@ public final class CanonicalRefinementSession {
     private String input() {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("request", instruction);
-        context.put("deal", compactDealIndex());
-        if (inspection.dealUi() != null) {
-            context.put("dealUi", compactDealUiIndex());
+        if (uiEditSurface != null) {
+            context.put("uiEditSurface", compactUiEditSurface(uiEditSurface));
+        } else {
+            context.put("deal", compactDealIndex());
+            if (inspection.dealUi() != null) {
+                context.put("dealUi", compactDealUiIndex());
+            }
         }
         context.put("packVersion", inspection.packVersion());
         context.put("packDigest", inspection.packDigest());
         if (generation && forcedArtifact.equals("dealui")) {
             context.put("componentPack", compactComponentPack());
         }
-        context.put("previousToolResults", agentTranscript());
+        if (uiEditSurface == null) context.put("previousToolResults", agentTranscript());
         if (repairWorkspace != null) {
             RepairSlot active = repairWorkspace.slots().stream()
                     .filter(value -> value.status() == RepairSlotStatus.REJECTED)
@@ -554,7 +559,8 @@ public final class CanonicalRefinementSession {
             result.add(transactionTool(
                     "apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations, generation));
         }
-        if (!generation && !repairing && !forcedArtifact.isEmpty() && writeUnlocked) {
+        if (!generation && !repairing && uiEditSurface == null
+                && !forcedArtifact.isEmpty() && writeUnlocked) {
             result.add(tool("artifact_unchanged",
                     "Report that the inspected artifact needs no edit. This is valid only after inspecting compiler-owned evidence; it advances to the other artifact.",
                     objectSchema(Map.of(
@@ -988,7 +994,16 @@ public final class CanonicalRefinementSession {
         if (artifact.equals("deal")) grant(dealGrants, change.allowedOperations());
         else grant(dealUiGrants, change.allowedOperations());
         queriedAliases.addAll(anchorAliases);
-        addTranscript(artifact.equals("deal") ? "inspect_deal_change" : "inspect_deal_ui_change", Map.of(
+        boolean localUiReplacement = artifact.equals("dealui")
+                && anchors.size() == 1
+                && requestedOperations.equals(List.of(UiCompilerWorkspace.REPLACE_SUBTREE));
+        if (localUiReplacement) {
+            uiEditSurface = CanonicalCompiler.queryDealUiEditSurface(
+                    deal, dealUi, pack, packSpecifier, anchors.get(0));
+        } else if (artifact.equals("dealui")) {
+            uiEditSurface = null;
+        }
+        Map<String, Object> inspectResult = Map.of(
                 "artifact", artifact,
                 "coneFingerprint", change.dependencyCone().fingerprint(),
                 "anchors", anchorAliases,
@@ -1007,7 +1022,10 @@ public final class CanonicalRefinementSession {
                                 "kind", value.kind(),
                                 "exposure", value.exposure(),
                                 "fingerprint", value.fingerprint()))
-                        .toList()));
+                        .toList());
+        if (!localUiReplacement) {
+            addTranscript(artifact.equals("deal") ? "inspect_deal_change" : "inspect_deal_ui_change", inspectResult);
+        }
         forcedArtifact = artifact;
     }
 
@@ -2048,6 +2066,7 @@ public final class CanonicalRefinementSession {
         dealGrants.clear();
         dealUiGrants.clear();
         queriedAliases.clear();
+        uiEditSurface = null;
         refreshAliases();
     }
 
@@ -2217,6 +2236,43 @@ public final class CanonicalRefinementSession {
                         "events", component.events(),
                         "capabilities", component.capabilities())).toList(),
                 "tokens", snapshot.tokens());
+    }
+
+    private Map<String, Object> compactUiEditSurface(UiCompilerWorkspace.UiEditSurface surface) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("revision", surface.revision().sourceDigest());
+        result.put("target", alias(surface.targetId()));
+        result.put("source", surface.source());
+        result.put("node", compactUiEditNode(surface.node()));
+        if (surface.parent() != null) result.put("parent", compactUiEditNode(surface.parent()));
+        result.put("children", surface.children().stream().map(this::compactUiEditNode).toList());
+        result.put("statePaths", surface.statePaths());
+        result.put("compatibleActions", surface.compatibleActions().stream().map(action -> Map.of(
+                "name", action.name(),
+                "fields", action.fields())).toList());
+        result.put("appTheme", surface.appThemeSource());
+        result.put("componentContracts", surface.componentContracts().stream().map(component -> Map.of(
+                "name", component.name(),
+                "properties", component.properties(),
+                "children", component.children(),
+                "parent", component.parent(),
+                "events", component.events(),
+                "capabilities", component.capabilities())).toList());
+        result.put("allowedOperation", Map.of(
+                "operation", surface.allowedOperation().operation(),
+                "target", alias(surface.allowedOperation().targetId()),
+                "fields", surface.allowedOperation().requiredFields()));
+        return Map.copyOf(result);
+    }
+
+    private Map<String, Object> compactUiEditNode(UiCompilerWorkspace.UiNodeSnapshot node) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("target", alias(node.id()));
+        result.put("component", node.component());
+        result.put("childCount", node.children().size());
+        result.put("statePaths", node.statePaths());
+        result.put("actionBindings", node.actionBindings());
+        return Map.copyOf(result);
     }
 
     private List<String> knownAliases(List<SemanticId> ids) {

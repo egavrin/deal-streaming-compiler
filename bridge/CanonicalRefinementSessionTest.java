@@ -57,6 +57,7 @@ public final class CanonicalRefinementSessionTest {
         interfaceChangeRequestsMinimalUiInspection();
         interfaceChangeUsesMinimalChildInsertion();
         subtreeReplacementPreservesUnrelatedSiblings();
+        subtreeWriteSurfaceOmitsCanonicalSourcesAndIndexes();
         uiOnlyChangeNeverTouchesDeal();
         uiViewQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -823,6 +824,34 @@ public final class CanonicalRefinementSessionTest {
                 "a sibling outside the target must remain byte-for-byte present");
         check(stringField(object, "deal").equals(DEAL),
                 "a UI subtree replacement must not touch DEAL");
+    }
+
+    private static void subtreeWriteSurfaceOmitsCanonicalSourcesAndIndexes() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Make the title more prominent", 4, 1);
+        String initial = session.nextRequestJson();
+        String text = uiNodeAlias(initial, "ui.Text");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(text),
+                "requestedOperations", List.of("replaceSubtree"))));
+        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(stringField(object(write), "input")), "input");
+        check(input.entries().stream().noneMatch(entry -> entry.key().equals("deal"))
+                        && input.entries().stream().noneMatch(entry -> entry.key().equals("dealUi")),
+                "a subtree write round must omit the complete DEAL and Deal UI indexes");
+        CanonicalJson.Obj surface = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.field(input, "uiEditSurface"), "uiEditSurface");
+        check(stringField(surface, "source").equals("ui.Text(value: state.title)"),
+                "the write surface must expose only the selected canonical subtree");
+        check(CompilerProtocolJson.encode(surface).contains("state.title")
+                        && CompilerProtocolJson.encode(surface).contains("IncrementAction")
+                        && CompilerProtocolJson.encode(surface).contains("replaceSubtree"),
+                "the write surface must retain state, compatible actions and its sole operation");
+        check(!CompilerProtocolJson.encode(surface).contains("ui.Button(text: \\\"Add\\\"")
+                        && !CompilerProtocolJson.encode(surface).contains("export class AppState"),
+                "the write surface must not leak siblings or full canonical sources");
+        check(toolNames(write).equals(List.of("replace_deal_ui_subtree")),
+                "the selected subtree round must expose exactly one write tool: " + toolNames(write));
     }
 
     private static void rawDeclarationInsertionIsHiddenBehindSemanticTools() {

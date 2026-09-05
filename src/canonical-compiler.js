@@ -111,6 +111,11 @@ export class CanonicalCompilerClient {
       ["deal", "dealUi", "pack", packSpecifier, targetId]);
   }
 
+  async queryDealUiEditSurface({ deal, source, pack, packSpecifier, targetId }) {
+    return this.#invoke("query-ui-edit-surface", { deal, dealUi: source, pack },
+      ["deal", "dealUi", "pack", packSpecifier, targetId]);
+  }
+
   async applyDealUiChangeChecked({ deal, source, pack, packSpecifier, baseDigest, fingerprints, operations }) {
     return this.#invoke("apply-ui-checked", {
       deal,

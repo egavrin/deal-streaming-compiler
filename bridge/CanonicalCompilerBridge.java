@@ -33,6 +33,7 @@ public final class CanonicalCompilerBridge {
             case "query-ui-document" -> queryUiDocument(args);
             case "query-ui-view" -> queryUiView(args);
             case "query-ui-node" -> queryUiNode(args);
+            case "query-ui-edit-surface" -> queryUiEditSurface(args);
             case "apply-ui" -> applyUi(args);
             case "apply-ui-checked" -> applyUiChecked(args);
             default -> throw new IllegalArgumentException("Unknown compiler command: " + args[0]);
@@ -102,6 +103,12 @@ public final class CanonicalCompilerBridge {
     private static Object queryUiNode(String[] args) throws Exception {
         requireArgs(args, 6);
         return CanonicalCompiler.queryDealUiNode(
+                read(args[1]), read(args[2]), read(args[3]), args[4], new SemanticId(args[5]));
+    }
+
+    private static Object queryUiEditSurface(String[] args) throws Exception {
+        requireArgs(args, 6);
+        return CanonicalCompiler.queryDealUiEditSurface(
                 read(args[1]), read(args[2]), read(args[3]), args[4], new SemanticId(args[5]));
     }
 
