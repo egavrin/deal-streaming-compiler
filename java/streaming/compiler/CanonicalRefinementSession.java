@@ -504,7 +504,7 @@ public final class CanonicalRefinementSession {
                         "description", "Exactly one complete export function for that Action. Put // @ui-update on the line immediately before export function")));
         return tool(
                 "append_deal_behavior",
-                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler.",
+                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Set final=false when another bounded behavior batch is required, then set final=true on the last batch.",
                 objectSchema(Map.of(
                         "supportingDeclarations", Map.of(
                                 "type", "array",
@@ -513,7 +513,9 @@ public final class CanonicalRefinementSession {
                         "actionHandlers", Map.of(
                                 "type", "array", "minItems", 1,
                                 "items", actionHandler),
-                        "final", Map.of("type", "boolean", "const", true))));
+                        "final", Map.of(
+                                "type", "boolean",
+                                "description", "False commits this batch and requests another compact behavior surface; true completes DEAL and advances to Deal UI"))));
     }
 
     private Map<String, Object> dealActionHandlerTool() {

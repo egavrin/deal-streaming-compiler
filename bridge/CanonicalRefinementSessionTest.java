@@ -188,11 +188,21 @@ public final class CanonicalRefinementSessionTest {
         check(toolNames(declarations).contains("append_deal_behavior")
                         && !toolNames(declarations).contains("apply_deal_changes"),
                 "greenfield declarations must expose complete action-handler pairs, not raw operations");
-        String dealAccepted = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+        String moreBehavior = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class IncrementAction {}",
                         "handlerDeclaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
+                "final", false)));
+        check(toolNames(moreBehavior).contains("append_deal_behavior"),
+                "a non-final behavior batch must commit and expose another compact behavior surface");
+        check(moreBehavior.contains("IncrementAction") && moreBehavior.contains("increment"),
+                "the next surface must inspect the committed behavior without asking the model to resend it");
+        String dealAccepted = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class ResetAction {}",
+                        "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {count: 0}; }")),
                 "final", true)));
         CanonicalJson.Obj dealAcceptedInput = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(stringField(object(dealAccepted), "input")), "input");
@@ -208,6 +218,8 @@ public final class CanonicalRefinementSessionTest {
                 "Deal UI surface must state its compact call syntax: " + dealAccepted);
         check(dealAccepted.contains("state.score"),
                 "Deal UI surface must identify the root state path: " + dealAccepted);
+        check(dealAccepted.contains("IncrementAction") && dealAccepted.contains("ResetAction"),
+                "all independently committed behavior batches must reach the final AppInterface");
         check(dealAccepted.contains("ForEach(state.items, item: app.Item, key: item.id)"),
                 "the Deal UI contract must publish the exact collection syntax");
         check(initial.contains("Do not finish an interactive request with zero actions"),
@@ -219,7 +231,7 @@ public final class CanonicalRefinementSessionTest {
                 "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
         String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(List.of(
                 Map.of("operation", "replaceViewBody", "target", view,
-                        "body", "ui.Column() { ui.Text(value: \"Counter\") ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) }")),
+                        "body", "ui.Column() { ui.Text(value: \"Counter\") ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) ui.Button(text: \"Reset\", onClick: action app.ResetAction {}) }")),
                 true));
         CanonicalJson.Obj object = object(result);
         check(booleanField(object, "accepted"), "greenfield canonical app must complete");
