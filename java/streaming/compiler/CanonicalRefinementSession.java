@@ -79,7 +79,10 @@ public final class CanonicalRefinementSession {
             Inspect the module together with both bootstrap units before that write. Every collection
             rendered as repeated UI must contain nominal items with a stable int or string id/key;
             shape nested visual data as keyed record collections, not primitive nested arrays. In
-            app-state or initial-state, complete only the named missing bootstrap unit. In declarations, both
+            initialState, return one complete AppState value on every path. The function has no state
+            parameter, so never assign through state there. Give every empty local collection an explicit
+            element type, for example `let items: Item[] = [];`, before appending with its length.
+            In app-state or initial-state, complete only the named missing bootstrap unit. In declarations, both
             bootstrap units are committed and immutable: use only one addDeclaration operation per
             new action, helper or handler, and never emit replaceDeclaration or replaceFunctionBody.
             Each declaration operation contains exactly one top-level class or function. Replace
@@ -450,7 +453,8 @@ public final class CanonicalRefinementSession {
                             "appStateDeclaration", Map.of("type", "string", "description",
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
                             "initialStateBody", Map.of("type", "string", "description",
-                                    "Statements only; omit signature and outer braces. Use int locals for integer literals and loops; only [] array literals")))));
+                                    "Statements only; omit signature and outer braces. Return one complete AppState value on every path; initialState has no state parameter. "
+                                            + "Use int locals for integer literals and loops. Only [] array literals are supported, and every empty local array must have an explicit element type, for example `let items: Item[] = [];`")))));
         } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal) {
             result.add(dealBehaviorTool());
         } else if (!dealOperations.isEmpty()) {
@@ -639,9 +643,7 @@ public final class CanonicalRefinementSession {
         fields.forEach(field -> payloadProperties.put(field, switch (field) {
             case "index" -> Map.of("type", "integer", "minimum", 0);
             case "newParentId" -> enumSchema(aliases("U"));
-            default -> Map.of(
-                    "type", "string",
-                    "description", repairFieldDescription(active, field));
+            default -> repairStringSchema(active, field);
         }));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("type", "object");
@@ -1350,13 +1352,31 @@ public final class CanonicalRefinementSession {
                 .collect(java.util.stream.Collectors.joining(" | "));
         boolean numericStringMix = slot.diagnostics().stream()
                 .anyMatch(value -> value.code().equals("E3010"));
+        boolean untypedEmptyArray = slot.diagnostics().stream()
+                .anyMatch(value -> value.code().equals("E3002"));
+        boolean functionBody = field.equals("body");
         return "Complete replacement for field " + field + " of " + slot.operation()
                 + " on compiler target " + alias(slot.targetId())
                 + ". It must differ from the rejected payload"
+                + (functionBody
+                        ? ". Supply statements only; never include a class or function declaration, signature, or outer braces"
+                        : "")
+                + (untypedEmptyArray
+                        ? ". Give every empty local array an explicit element type, for example `let items: Item[] = [];`"
+                        : "")
                 + (numericStringMix
                         ? ". Do not concatenate string and numeric values; preserve numeric state for typed UI formatting"
                         : "")
                 + (contract.isBlank() ? "." : ". " + contract);
+    }
+
+    private Map<String, Object> repairStringSchema(RepairSlot slot, String field) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "string");
+        schema.put("description", repairFieldDescription(slot, field));
+        String rejected = slot.payload().get(field);
+        if (rejected != null) schema.put("not", Map.of("const", rejected));
+        return Map.copyOf(schema);
     }
 
     private void reject(

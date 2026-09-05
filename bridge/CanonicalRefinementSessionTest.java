@@ -63,6 +63,7 @@ public final class CanonicalRefinementSessionTest {
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
+        emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
@@ -125,6 +126,33 @@ public final class CanonicalRefinementSessionTest {
         check(repair.contains("preserve numeric state for typed UI formatting")
                         && repair.contains("no implicit coercion"),
                 "repair surface must explain the supported representation instead of repeating E3010: " + repair);
+    }
+
+    private static void emptyArrayRepairPublishesAConstrainedFunctionBodyContract() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a schedule with repeated items", 6, 2);
+        String initial = session.nextRequestJson();
+        check(initial.contains("every empty local array must have an explicit element type")
+                        && initial.contains("Return one complete AppState value"),
+                "greenfield bootstrap must publish the collection and return contracts");
+        String repair = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(
+                        "export class Item { id: string = \"\"; label: string = \"\"; }"),
+                "appStateDeclaration",
+                        "export class AppState { title: string = \"\"; items: Item[] = []; }",
+                "initialStateBody", "let items = []; return {title: \"Health\", items: items};")));
+        check(toolNames(repair).contains("patch_repair_slot"),
+                "an untyped empty array must enter compiler-owned repair");
+        check(repair.contains("Give every empty local array an explicit element type")
+                        && repair.contains("never include a class or function declaration")
+                        && repair.contains("\"not\":{\"const\""),
+                "repair tool must teach and structurally exclude the rejected body: " + repair);
+        String repaired = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
+                "slot", "R3",
+                "payload", Map.of("body",
+                        "let items: Item[] = []; return {title: \"Health\", items: items};"))));
+        check(toolNames(repaired).contains("append_deal_behavior"),
+                "a typed local collection repair must preserve the staged bootstrap siblings");
     }
 
     private static void inspectChangeUnlocksCompilerOwnedCone() {
