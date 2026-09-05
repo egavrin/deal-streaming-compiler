@@ -30,6 +30,8 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
+    private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
+    private static final int MAX_ACTION_HANDLERS_PER_BATCH = 2;
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
@@ -529,11 +531,12 @@ public final class CanonicalRefinementSession {
                 "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Set final=false when another bounded behavior batch is required, then set final=true on the last batch.",
                 objectSchema(Map.of(
                         "supportingDeclarations", Map.of(
-                                "type", "array",
+                                "type", "array", "maxItems", MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
                                 "items", Map.of("type", "string", "description",
                                         "Exactly one complete unique helper function or field-only record class")),
                         "actionHandlers", Map.of(
                                 "type", "array", "minItems", 1,
+                                "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
                                 "items", actionHandler),
                         "final", Map.of(
                                 "type", "boolean",
@@ -1065,6 +1068,11 @@ public final class CanonicalRefinementSession {
         grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
         CanonicalJson.Arr supporting = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
+        if (supporting.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
+            throw new IllegalArgumentException(
+                    "A behavior batch accepts at most " + MAX_SUPPORTING_DECLARATIONS_PER_BATCH
+                            + " supporting declarations");
+        }
         for (CanonicalJson.Value value : supporting.items()) {
             if (!(value instanceof CanonicalJson.Str declaration)) {
                 throw new IllegalArgumentException("supportingDeclarations must contain strings");
@@ -1076,6 +1084,11 @@ public final class CanonicalRefinementSession {
         }
         CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
                 field(arguments, "actionHandlers"), "actionHandlers");
+        if (pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
+            throw new IllegalArgumentException(
+                    "A behavior batch accepts at most " + MAX_ACTION_HANDLERS_PER_BATCH
+                            + " action-handler pairs; commit this batch with final=false and continue");
+        }
         for (CanonicalJson.Value value : pairs.items()) {
             CanonicalJson.Obj pair = CompilerProtocolJson.requireObject(value, "action-handler pair");
             operations.add(Map.of(

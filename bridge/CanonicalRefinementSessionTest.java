@@ -65,7 +65,36 @@ public final class CanonicalRefinementSessionTest {
         numericStringRepairExplainsTypedUiFormatting();
         emptyArrayRepairPublishesAConstrainedFunctionBodyContract();
         rejectedOptionalDeclarationCanBeDroppedWithoutLosingSiblings();
+        greenfieldBehaviorBatchesAreCompilerBounded();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void greenfieldBehaviorBatchesAreCompilerBounded() {
+        var session = CanonicalRefinementSession.greenfield(
+                PACK, "./ui.pack", "Create a multi-control application", 8, 2);
+        session.nextRequestJson();
+        String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
+                "initialStateBody", "return {title: \"Ready\", count: 0};")));
+        check(behavior.contains("\"maxItems\":2"),
+                "the compiler surface must cap action and helper batches before provider generation: " + behavior);
+
+        var pair = Map.of(
+                "actionDeclaration", "export class IncrementAction {}",
+                "handlerDeclaration", "// @ui-update\n"
+                        + "export function increment(state: AppState, action: IncrementAction): AppState { "
+                        + "return {title: state.title, count: state.count + 1}; }");
+        boolean rejected = false;
+        try {
+            session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                    "supportingDeclarations", List.of(),
+                    "actionHandlers", List.of(pair, pair, pair),
+                    "final", false)));
+        } catch (IllegalArgumentException expected) {
+            rejected = expected.getMessage().contains("at most 2 action-handler pairs");
+        }
+        check(rejected, "the compiler must reject an oversized behavior batch even if a provider ignores its schema");
     }
 
     private static void inspectChangeSchemaKeepsArtifactAnchorsDisjoint() {
