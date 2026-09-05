@@ -164,6 +164,8 @@ public final class CanonicalRefinementSessionTest {
                 "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
                 "initialStateBody", "return {title: \"Counter\", count: 0};")));
         check(toolNames(behavior).contains("append_deal_behavior"), "foundation must advance to behavior");
+        check(!toolNames(behavior).contains("finish_deal"),
+                "a generated mini-application cannot finish with an empty action interface");
         String repair = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(
                         "export function placeholder(state: AppState): void { return state; }"),
@@ -324,18 +326,24 @@ public final class CanonicalRefinementSessionTest {
                 "the compact input must identify the declarations-only stage");
         check(stringField(input, "stageObjective").contains("committed"),
                 "the compact input must state that bootstrap symbols are immutable");
-        check(toolNames(next).contains("finish_deal"),
-                "declarations stage must allow a source-free transition to Deal UI");
-        String declarationsWrite = session.acceptToolCallJson(
-                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        check(declarationsWrite.contains("Bootstrap is committed"),
-                "the write tool must explain its narrowed generation stage");
+        check(!toolNames(next).contains("finish_deal"),
+                "declarations stage must not finish a generated mini-app without an action");
         check(!next.contains("\"operation\":{\"const\":\"replaceDeclaration\"}"),
                 "accepted AppState bootstrap must not be replaceable again");
         check(!next.contains("\"operation\":{\"const\":\"replaceFunctionBody\"}"),
                 "accepted initialState bootstrap must not be replaceable again");
         check(!toolNames(next).contains("query_deal_ui_view"),
                 "Deal UI must remain hidden until DEAL final=true");
+        String withBehavior = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class IncrementAction {}",
+                        "handlerDeclaration", "// @ui-update\n"
+                                + "export function increment(state: AppState, action: IncrementAction): AppState { "
+                                + "return {count: state.count + 1}; }")),
+                "final", false)));
+        check(toolNames(withBehavior).contains("finish_deal"),
+                "a checked reachable action must unlock the source-free transition to Deal UI");
         String ui = session.acceptToolCallJson(
                 "finish_deal", CompilerProtocolJson.encode(Map.of("reason", "Behavior is complete")));
         check(toolNames(ui).contains("inspect_deal_ui_change"),

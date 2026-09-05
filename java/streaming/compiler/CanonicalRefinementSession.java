@@ -481,7 +481,8 @@ public final class CanonicalRefinementSession {
             result.add(dealActionHandlerTool());
             result.add(dealSupportingDeclarationTool());
         }
-        if (generation && generationStage().equals("declarations")) {
+        if (generation && generationStage().equals("declarations")
+                && !inspection.deal().appInterface().actions().isEmpty()) {
             result.add(tool("finish_deal",
                     repairMustFinishDeal
                             ? "All rejected declarations already exist. Drop the duplicate ChangeSet and transition to Deal UI."
@@ -1163,6 +1164,9 @@ public final class CanonicalRefinementSession {
     private void finishDeal() {
         if (!generation || !generationStage().equals("declarations") || !dealIsValid()) {
             throw new IllegalArgumentException("finish_deal requires valid generated DEAL after bootstrap");
+        }
+        if (inspection.deal().appInterface().actions().isEmpty()) {
+            throw new IllegalArgumentException("finish_deal requires at least one reachable action for a generated mini-application");
         }
         forcedArtifact = "dealui";
         repairScopes = List.of();
