@@ -1433,6 +1433,10 @@ public final class CanonicalRefinementSession {
                 .anyMatch(value -> value.code().equals("E3010"));
         boolean untypedEmptyArray = slot.diagnostics().stream()
                 .anyMatch(value -> value.code().equals("E3002"));
+        boolean uiStringTypeMismatch = slot.diagnostics().stream()
+                .anyMatch(value -> value.code().equals("UI2031")
+                        && value.expected().contains("string")
+                        && (value.actual().contains("int") || value.actual().contains("number")));
         boolean functionBody = field.equals("body");
         return "Complete replacement for field " + field + " of " + slot.operation()
                 + " on compiler target " + alias(slot.targetId())
@@ -1445,6 +1449,9 @@ public final class CanonicalRefinementSession {
                         : "")
                 + (numericStringMix
                         ? ". Do not concatenate string and numeric values; preserve numeric state for typed UI formatting"
+                        : "")
+                + (uiStringTypeMismatch
+                        ? ". Fix the expression at the diagnostic range with a typed numeric component. For int state use ui.IntText or ui.IntStat instead of ui.Text, ui.Stat, or an empty string placeholder; preserve unrelated nodes byte-for-byte"
                         : "")
                 + (contract.isBlank() ? "." : ". " + contract);
     }
