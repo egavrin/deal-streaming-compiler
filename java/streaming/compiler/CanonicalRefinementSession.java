@@ -64,6 +64,8 @@ public final class CanonicalRefinementSession {
             assignment, arbitrary calls, length, methods, coercion or ternaries. Render dynamic collections
             only with ForEach(state.items, item: app.Item, key: item.id) { ... }. Use only compiler-published
             components, state paths, action constructors and tokens. A view body has exactly one root node.
+            Modernize an existing screen with replace_deal_ui_view. Never emulate view replacement by
+            removing the current root view and adding another view.
             """;
     private static final String DEAL_GENERATION_SYSTEM_PROMPT = """
             Create the behavior of one complete canonical DEAL application through the compact
@@ -333,6 +335,7 @@ public final class CanonicalRefinementSession {
             case "add_deal_action_handler" -> addDealActionHandler(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
+            case "replace_deal_ui_view" -> replaceDealUiView(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
             case "unchanged" -> unchanged();
@@ -463,6 +466,12 @@ public final class CanonicalRefinementSession {
                             "description", "Briefly name the accepted actions that satisfy the requested interactions")))));
         }
         List<Map<String, Object>> uiOperations = dealUiOperationSchemas();
+        List<OperationDescriptor> replaceViewGrants = dealUiGrants.values().stream()
+                .filter(value -> value.operation().equals(UiCompilerWorkspace.REPLACE_VIEW_BODY))
+                .toList();
+        if (!replaceViewGrants.isEmpty() && !generation) {
+            result.add(replaceDealUiViewTool(replaceViewGrants));
+        }
         if (!uiOperations.isEmpty()) {
             result.add(transactionTool(
                     "apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations, generation));
@@ -507,6 +516,18 @@ public final class CanonicalRefinementSession {
                         "handlerDeclaration", Map.of(
                                 "type", "string",
                                 "description", "Exactly one complete handler for that Action, starting with // @ui-update immediately before export function"),
+                        "final", Map.of("type", "boolean", "const", true))));
+    }
+
+    private Map<String, Object> replaceDealUiViewTool(List<OperationDescriptor> grants) {
+        return tool(
+                "replace_deal_ui_view",
+                "Atomically replace the body of one existing Deal UI view. Use this for screen modernization; never remove and re-add the root view.",
+                objectSchema(Map.of(
+                        "target", enumSchema(grants.stream().map(value -> alias(value.targetId())).toList()),
+                        "body", Map.of(
+                                "type", "string",
+                                "description", "Declarative statements inside the existing view only; omit the view signature and outer braces"),
                         "final", Map.of("type", "boolean", "const", true))));
     }
 
@@ -700,6 +721,10 @@ public final class CanonicalRefinementSession {
         if (forcedArtifact.equals("deal") || inspection.dealUi() == null) return List.of();
         List<Map<String, Object>> operations = new ArrayList<>();
         dealUiGrants.values().forEach(grant -> {
+            if (!generation && grant.operation().equals(UiCompilerWorkspace.REPLACE_VIEW_BODY)) return;
+            if (grant.operation().equals(UiCompilerWorkspace.REMOVE_VIEW)
+                    && inspection.dealUi().views().stream().anyMatch(view ->
+                            view.id().equals(grant.targetId()) && view.root())) return;
             UiCompilerWorkspace.UiNodeSnapshot node = inspection.dealUi().nodes().stream()
                     .filter(value -> value.id().equals(grant.targetId())).findFirst().orElse(null);
             Map<String, Object> extra = switch (grant.operation()) {
@@ -1039,6 +1064,21 @@ public final class CanonicalRefinementSession {
                         "final", booleanField(arguments, "final")))),
                 "action-handler transaction");
         applyDeal(transaction);
+    }
+
+    private void replaceDealUiView(CanonicalJson.Obj arguments) {
+        SemanticId target = resolveAlias(string(arguments, "target"), "V");
+        OperationDescriptor grant = dealUiGrants.get(grantKey(UiCompilerWorkspace.REPLACE_VIEW_BODY, target));
+        if (grant == null) throw new IllegalArgumentException("View replacement is outside the compiler-owned change cone");
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", List.of(Map.of(
+                                "operation", UiCompilerWorkspace.REPLACE_VIEW_BODY,
+                                "target", alias(target),
+                                "body", string(arguments, "body"))),
+                        "final", booleanField(arguments, "final")))),
+                "view replacement transaction");
+        applyDealUi(transaction);
     }
 
     private boolean replacesAppStateBootstrap(DealCompilerWorkspace.Operation operation) {

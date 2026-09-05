@@ -50,6 +50,7 @@ public final class CanonicalRefinementSessionTest {
         writePhaseHidesAllQueryTools();
         dealBodyInspectionCanAddSiblingDeclarations();
         interfaceChangeAutomaticallyUnlocksRootView();
+        interfaceChangeUsesAtomicRootViewReplacement();
         uiOnlyChangeNeverTouchesDeal();
         uiViewQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -485,6 +486,32 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
+    }
+
+    private static void interfaceChangeUsesAtomicRootViewReplacement() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add an undo action and control", 6, 2);
+        String initial = session.nextRequestJson();
+        String module = "M1";
+        session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(module),
+                "requestedOperations", List.of("addDeclaration"))));
+        String uiRequest = session.acceptToolCallJson("add_deal_action_handler", CompilerProtocolJson.encode(Map.of(
+                "actionDeclaration", "export class UndoAction {}",
+                "handlerDeclaration", "// @ui-update\nexport function undo(state: AppState, action: UndoAction): AppState { return {title: state.title, count: state.count}; }",
+                "final", true)));
+        check(toolNames(uiRequest).contains("replace_deal_ui_view"),
+                "an interface change must expose one semantic root-view replacement tool");
+        check(!uiRequest.contains("\"const\":\"removeView\""),
+                "the compact surface must not allow deleting the canonical root view");
+        String result = session.acceptToolCallJson("replace_deal_ui_view", CompilerProtocolJson.encode(Map.of(
+                "target", uiViewAlias(uiRequest, "App"),
+                "body", "ui.Column() { ui.Text(value: state.title) ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) ui.Button(text: \"Undo\", onClick: action app.UndoAction {}) }",
+                "final", true)));
+        check(booleanField(object(result), "accepted"),
+                "atomic root-view replacement must produce a checked canonical revision");
+        check(stringField(object(result), "dealUi").contains("UndoAction"),
+                "accepted Deal UI must contain the new binding");
     }
 
     private static void uiViewQueryCanAddAView() {
