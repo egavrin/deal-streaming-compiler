@@ -148,6 +148,8 @@ public final class CanonicalRefinementSession {
     private CanonicalCompiler.Inspection inspection;
     private List<RepairScope> repairScopes = List.of();
     private List<StructuredDiagnostic> repairDiagnostics = List.of();
+    private Map<String, String> rejectedPayloads = Map.of();
+    private String rejectedAttemptFingerprint = "";
     private String forcedArtifact = "";
     private final Map<String, SemanticId> aliases = new LinkedHashMap<>();
     private final Map<String, String> aliasesById = new LinkedHashMap<>();
@@ -355,7 +357,8 @@ public final class CanonicalRefinementSession {
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
         if (!repairDiagnostics.isEmpty()) {
             context.put("repairDirective", Map.of(
-                    "instruction", "Change the rejected operation. Never resubmit an identical operation.",
+                    "instruction", "Change the rejected operation. The previous payload is excluded by the active tool schema; never resubmit it.",
+                    "rejectedCandidateFingerprint", rejectedAttemptFingerprint,
                     "diagnostics", compactDiagnostics(repairDiagnostics)));
         }
         if (!forcedArtifact.isEmpty()) context.put("requiredArtifact", forcedArtifact);
@@ -479,18 +482,17 @@ public final class CanonicalRefinementSession {
             if (generation && !allowedGreenfieldDealOperation(grant)) return;
             Map<String, Object> extra = switch (grant.operation()) {
                 case DealCompilerWorkspace.ADD_DECLARATION ->
-                        Map.of("declaration", Map.of(
-                                "type", "string",
-                                "description", "Exactly one complete top-level class or function declaration with a unique name. Existing names: "
-                                        + existingDealSymbolNames()));
+                        Map.of("declaration", editableStringSchema(
+                                "Exactly one complete top-level class or function declaration with a unique name. Existing names: "
+                                        + existingDealSymbolNames(), grant.operation(), grant.targetId(), "declaration"));
                 case DealCompilerWorkspace.REPLACE_DECLARATION ->
-                        Map.of("declaration", Map.of(
-                                "type", "string",
-                                "description", "Exactly one declaration with the same name and kind as the target"));
+                        Map.of("declaration", editableStringSchema(
+                                "Exactly one declaration with the same name and kind as the target",
+                                grant.operation(), grant.targetId(), "declaration"));
                 case DealCompilerWorkspace.REPLACE_FUNCTION_BODY, DealCompilerWorkspace.REPLACE_BLOCK_BODY ->
-                        Map.of("body", Map.of(
-                                "type", "string",
-                                "description", "Statements only; omit declaration signature and outer braces"));
+                        Map.of("body", editableStringSchema(
+                                "Statements only; omit declaration signature and outer braces",
+                                grant.operation(), grant.targetId(), "body"));
                 default -> Map.of();
             };
             addIfAllowed(operations, grant.operation(), grant.targetId(), extra);
@@ -523,19 +525,24 @@ public final class CanonicalRefinementSession {
             UiCompilerWorkspace.UiNodeSnapshot node = inspection.dealUi().nodes().stream()
                     .filter(value -> value.id().equals(grant.targetId())).findFirst().orElse(null);
             Map<String, Object> extra = switch (grant.operation()) {
-                case UiCompilerWorkspace.ADD_VIEW -> Map.of("source", Map.of("type", "string"));
-                case UiCompilerWorkspace.REPLACE_VIEW_BODY -> Map.of("body", Map.of("type", "string"));
-                case UiCompilerWorkspace.REPLACE_SUBTREE -> Map.of("source", Map.of("type", "string"));
+                case UiCompilerWorkspace.ADD_VIEW -> Map.of("source", editableStringSchema(
+                        "One complete new view declaration", grant.operation(), grant.targetId(), "source"));
+                case UiCompilerWorkspace.REPLACE_VIEW_BODY -> Map.of("body", editableStringSchema(
+                        "Declarative statements inside the existing view only", grant.operation(), grant.targetId(), "body"));
+                case UiCompilerWorkspace.REPLACE_SUBTREE -> Map.of("source", editableStringSchema(
+                        "One replacement Deal UI subtree", grant.operation(), grant.targetId(), "source"));
                 case UiCompilerWorkspace.INSERT_CHILD -> Map.of(
                         "index", Map.of("type", "integer", "minimum", 0,
                                 "maximum", node == null ? 0 : node.children().size()),
-                        "source", Map.of("type", "string"));
+                        "source", editableStringSchema(
+                                "One Deal UI child subtree", grant.operation(), grant.targetId(), "source"));
                 case UiCompilerWorkspace.MOVE_NODE -> Map.of(
                         "newParent", enumSchema(queriedUiContainerAliases()),
                         "index", Map.of("type", "integer", "minimum", 0));
                 case UiCompilerWorkspace.SET_PROPERTY -> Map.of(
                         "property", enumSchema(node == null ? List.of() : node.writableProperties()),
-                        "expression", Map.of("type", "string"));
+                        "expression", editableStringSchema(
+                                "One typed Deal UI expression", grant.operation(), grant.targetId(), "expression"));
                 default -> Map.of();
             };
             if (!grant.operation().equals(UiCompilerWorkspace.MOVE_NODE)
@@ -623,6 +630,7 @@ public final class CanonicalRefinementSession {
 
     private void applyDeal(CanonicalJson.Obj arguments) {
         List<DealCompilerWorkspace.Operation> operations = dealOperations(field(arguments, "operations"));
+        if (rejectRepeatedAttempt("deal", operations)) return;
         boolean finalChange = booleanField(arguments, "final");
         String beforeDigest = inspection.deal().sourceDigest();
         boolean replacesAppState = generation && operations.stream().anyMatch(this::replacesAppStateBootstrap);
@@ -669,6 +677,7 @@ public final class CanonicalRefinementSession {
         repairMustFinishDeal = false;
         repairScopes = List.of();
         repairDiagnostics = List.of();
+        clearRejectedAttempt();
         forcedArtifact = generation
                 ? finalChange ? "dealui" : "deal"
                 : result.impact().interfaceChanged() ? "dealui" : "";
@@ -761,6 +770,7 @@ public final class CanonicalRefinementSession {
     private void applyDealUi(CanonicalJson.Obj arguments) {
         if (inspection.dealUi() == null) throw new IllegalStateException("Deal UI inspection is unavailable");
         List<UiCompilerWorkspace.Operation> operations = dealUiOperations(field(arguments, "operations"));
+        if (rejectRepeatedAttempt("dealui", operations)) return;
         boolean finalChange = booleanField(arguments, "final");
         var result = CanonicalCompiler.applyDealUiChangeChecked(
                 deal, dealUi, pack, packSpecifier,
@@ -780,6 +790,7 @@ public final class CanonicalRefinementSession {
         repairMustFinishDeal = false;
         repairScopes = List.of();
         repairDiagnostics = List.of();
+        clearRejectedAttempt();
         forcedArtifact = "";
         inspection = CanonicalCompiler.compileCanonicalApp(deal, dealUi, pack, packSpecifier);
         resetSurface();
@@ -792,6 +803,9 @@ public final class CanonicalRefinementSession {
             List<StructuredDiagnostic> diagnostics,
             String artifact,
             Object attemptedOperations) {
+        rejectedAttemptFingerprint = DealCompilerWorkspace.digest(
+                artifact + "\u0000" + CompilerProtocolJson.encode(attemptedOperations));
+        rejectedPayloads = rejectedPayloads(attemptedOperations);
         semanticRepairs++;
         int artifactRepairs = artifact.equals("deal")
                 ? ++dealSemanticRepairs
@@ -813,6 +827,75 @@ public final class CanonicalRefinementSession {
                 && !diagnostics.isEmpty()
                 && diagnostics.stream().allMatch(value -> value.code().equals("E2002"));
         forcedArtifact = artifact;
+    }
+
+    private boolean rejectRepeatedAttempt(String artifact, Object attemptedOperations) {
+        if (rejectedAttemptFingerprint.isEmpty()) return false;
+        String fingerprint = DealCompilerWorkspace.digest(
+                artifact + "\u0000" + CompilerProtocolJson.encode(attemptedOperations));
+        if (!fingerprint.equals(rejectedAttemptFingerprint)) return false;
+        addTranscript("compiler_no_progress", Map.of(
+                "artifact", artifact,
+                "rejectedCandidateFingerprint", fingerprint,
+                "instruction", "The operation is byte-identical to the rejected candidate; change only the scoped payload."));
+        return true;
+    }
+
+    private void clearRejectedAttempt() {
+        rejectedPayloads = Map.of();
+        rejectedAttemptFingerprint = "";
+    }
+
+    private Map<String, String> rejectedPayloads(Object attemptedOperations) {
+        Map<String, String> result = new LinkedHashMap<>();
+        if (attemptedOperations instanceof List<?> values) {
+            for (Object value : values) {
+                if (value instanceof DealCompilerWorkspace.Operation operation) {
+                    switch (operation) {
+                        case DealCompilerWorkspace.AddDeclaration item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "declaration"), item.declaration());
+                        case DealCompilerWorkspace.ReplaceDeclaration item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "declaration"), item.declaration());
+                        case DealCompilerWorkspace.ReplaceFunctionBody item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "body"), item.body());
+                        case DealCompilerWorkspace.ReplaceBlockBody item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "body"), item.body());
+                        case DealCompilerWorkspace.RemoveDeclaration ignored -> { }
+                    }
+                } else if (value instanceof UiCompilerWorkspace.Operation operation) {
+                    switch (operation) {
+                        case UiCompilerWorkspace.AddView item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "source"), item.source());
+                        case UiCompilerWorkspace.ReplaceViewBody item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "body"), item.body());
+                        case UiCompilerWorkspace.ReplaceSubtree item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "source"), item.source());
+                        case UiCompilerWorkspace.InsertChild item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "source"), item.source());
+                        case UiCompilerWorkspace.SetProperty item -> result.put(
+                                payloadKey(operationName(item), item.targetId(), "expression"), item.expression());
+                        default -> { }
+                    }
+                }
+            }
+        }
+        return Map.copyOf(result);
+    }
+
+    private Map<String, Object> editableStringSchema(
+            String description, String operation, SemanticId target, String field) {
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "string");
+        String rejected = rejectedPayloads.get(payloadKey(operation, target, field));
+        schema.put("description", rejected == null
+                ? description
+                : description + ". Must differ from the compiler-rejected previous value");
+        if (rejected != null) schema.put("not", Map.of("const", rejected));
+        return Map.copyOf(schema);
+    }
+
+    private static String payloadKey(String operation, SemanticId target, String field) {
+        return operation + ":" + target.value() + ":" + field;
     }
 
     private static Map<String, Object> compactDiagnostics(List<StructuredDiagnostic> diagnostics) {
@@ -1002,6 +1085,19 @@ public final class CanonicalRefinementSession {
             case DealCompilerWorkspace.ReplaceDeclaration ignored -> DealCompilerWorkspace.REPLACE_DECLARATION;
             case DealCompilerWorkspace.ReplaceFunctionBody ignored -> DealCompilerWorkspace.REPLACE_FUNCTION_BODY;
             case DealCompilerWorkspace.ReplaceBlockBody ignored -> DealCompilerWorkspace.REPLACE_BLOCK_BODY;
+        };
+    }
+
+    private static String operationName(UiCompilerWorkspace.Operation operation) {
+        return switch (operation) {
+            case UiCompilerWorkspace.AddView ignored -> UiCompilerWorkspace.ADD_VIEW;
+            case UiCompilerWorkspace.RemoveView ignored -> UiCompilerWorkspace.REMOVE_VIEW;
+            case UiCompilerWorkspace.ReplaceViewBody ignored -> UiCompilerWorkspace.REPLACE_VIEW_BODY;
+            case UiCompilerWorkspace.ReplaceSubtree ignored -> UiCompilerWorkspace.REPLACE_SUBTREE;
+            case UiCompilerWorkspace.InsertChild ignored -> UiCompilerWorkspace.INSERT_CHILD;
+            case UiCompilerWorkspace.RemoveNode ignored -> UiCompilerWorkspace.REMOVE_NODE;
+            case UiCompilerWorkspace.MoveNode ignored -> UiCompilerWorkspace.MOVE_NODE;
+            case UiCompilerWorkspace.SetProperty ignored -> UiCompilerWorkspace.SET_PROPERTY;
         };
     }
 

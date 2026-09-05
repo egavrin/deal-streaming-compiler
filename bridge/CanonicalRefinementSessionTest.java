@@ -341,6 +341,17 @@ public final class CanonicalRefinementSessionTest {
         check(repairRequest.contains("apply_deal_changes"), "repair must retain the rejected transaction tool");
         check(!repairRequest.contains("query_deal_symbol"), "repair must hide unrelated query tools");
         check(repairRequest.contains("return missing"), "repair context must retain the rejected body");
+        check(repairRequest.contains("\"not\":{\"const\":\"return missing;\"}"),
+                "repair schema must exclude the exact rejected payload");
+        String repeated = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+                "operation", "replaceFunctionBody",
+                "target", body,
+                "body", "return missing;"), true));
+        CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repeated), "semanticRepairs");
+        check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
+                "a byte-identical retry must not consume another semantic repair");
+        check(repeated.contains("compiler_no_progress"),
+                "an identical retry must receive an explicit compiler-owned no-progress result");
         String result = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
                 "target", body,
