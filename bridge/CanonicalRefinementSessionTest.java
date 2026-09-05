@@ -118,13 +118,15 @@ public final class CanonicalRefinementSessionTest {
                         "export class Item { id: int = 0; label: string = \"\"; }"),
                 "appStateDeclaration", "export class AppState { count: int = 0; items: Item[] = []; }",
                 "initialStateBody", "return {count: 0, items: []};")));
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        String dealAccepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class IncrementAction {}"),
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
-                true));
+        check(toolNames(declarations).contains("append_deal_behavior")
+                        && !toolNames(declarations).contains("apply_deal_changes"),
+                "greenfield declarations must expose complete action-handler pairs, not raw operations");
+        String dealAccepted = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(),
+                "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class IncrementAction {}",
+                        "handlerDeclaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
+                "final", true)));
         CanonicalJson.Obj dealAcceptedInput = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(stringField(object(dealAccepted), "input")), "input");
         check(stringField(dealAcceptedInput, "requiredArtifact").equals("dealui"),

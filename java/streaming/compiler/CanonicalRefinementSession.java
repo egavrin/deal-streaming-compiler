@@ -324,6 +324,7 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
             case "inspect_change" -> inspectChange(arguments);
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
+            case "append_deal_behavior" -> appendDealBehavior(arguments);
             case "apply_deal_changes" -> applyDeal(arguments);
             case "finish_deal" -> finishDeal();
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
@@ -437,11 +438,10 @@ public final class CanonicalRefinementSession {
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
                             "initialStateBody", Map.of("type", "string", "description",
                                     "Statements only; omit signature and outer braces. Use int locals for integer literals and loops; only [] array literals")))));
+        } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal) {
+            result.add(dealBehaviorTool());
         } else if (!dealOperations.isEmpty()) {
-            String description = generation && generationStage().equals("declarations")
-                    ? "Bootstrap is committed. Add only new top-level action, helper or handler declarations."
-                    : "Apply one atomic DEAL ChangeSet.";
-            result.add(transactionTool("apply_deal_changes", description, dealOperations));
+            result.add(transactionTool("apply_deal_changes", "Apply one atomic DEAL ChangeSet.", dealOperations));
         }
         if (generation && generationStage().equals("declarations")) {
             result.add(tool("finish_deal",
@@ -461,6 +461,28 @@ public final class CanonicalRefinementSession {
                     objectSchema(Map.of("reason", Map.of("type", "string")))));
         }
         return List.copyOf(result);
+    }
+
+    private Map<String, Object> dealBehaviorTool() {
+        Map<String, Object> actionHandler = objectSchema(Map.of(
+                "actionDeclaration", Map.of(
+                        "type", "string",
+                        "description", "Exactly one complete unique field-only export class Action declaration"),
+                "handlerDeclaration", Map.of(
+                        "type", "string",
+                        "description", "Exactly one complete export function for that Action. Put // @ui-update on the line immediately before export function")));
+        return tool(
+                "append_deal_behavior",
+                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler.",
+                objectSchema(Map.of(
+                        "supportingDeclarations", Map.of(
+                                "type", "array",
+                                "items", Map.of("type", "string", "description",
+                                        "Exactly one complete unique helper function or field-only record class")),
+                        "actionHandlers", Map.of(
+                                "type", "array", "minItems", 1,
+                                "items", actionHandler),
+                        "final", Map.of("type", "boolean"))));
     }
 
     private void unlockGreenfieldFoundation() {
@@ -922,6 +944,43 @@ public final class CanonicalRefinementSession {
                         "operations", operations,
                         "final", false))),
                 "foundation transaction");
+        applyDeal(transaction);
+    }
+
+    private void appendDealBehavior(CanonicalJson.Obj arguments) {
+        List<Map<String, Object>> operations = new ArrayList<>();
+        String module = alias(inspection.deal().moduleId());
+        grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
+        CanonicalJson.Arr supporting = CompilerProtocolJson.requireArray(
+                field(arguments, "supportingDeclarations"), "supportingDeclarations");
+        for (CanonicalJson.Value value : supporting.items()) {
+            if (!(value instanceof CanonicalJson.Str declaration)) {
+                throw new IllegalArgumentException("supportingDeclarations must contain strings");
+            }
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", declaration.value()));
+        }
+        CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
+                field(arguments, "actionHandlers"), "actionHandlers");
+        for (CanonicalJson.Value value : pairs.items()) {
+            CanonicalJson.Obj pair = CompilerProtocolJson.requireObject(value, "action-handler pair");
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", string(pair, "actionDeclaration")));
+            operations.add(Map.of(
+                    "operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module,
+                    "declaration", string(pair, "handlerDeclaration")));
+        }
+        if (pairs.items().isEmpty()) throw new IllegalArgumentException("At least one action-handler pair is required");
+        CanonicalJson.Obj transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", operations,
+                        "final", booleanField(arguments, "final")))),
+                "behavior transaction");
         applyDeal(transaction);
     }
 
