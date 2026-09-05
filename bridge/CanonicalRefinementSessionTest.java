@@ -212,7 +212,7 @@ public final class CanonicalRefinementSessionTest {
         session.acceptToolCallJson("query_deal_symbol", CompilerProtocolJson.encode(Map.of(
                 "target", appState)));
         String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
+                Map.of("operation", "replaceDeclaration",
                         "declaration", "export class AppState { title: string = \"\"; count: int = 0; }")), false));
         CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.decode(stringField(object(next), "input")), "input");

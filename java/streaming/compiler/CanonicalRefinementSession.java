@@ -1603,6 +1603,7 @@ public final class CanonicalRefinementSession {
         if (explicit instanceof CanonicalJson.Str value) return resolveAlias(value.value(), null);
         List<SemanticId> candidates = grants.values().stream()
                 .filter(grant -> grant.operation().equals(operationName))
+                .filter(grant -> grants != dealGrants || !generation || allowedGreenfieldDealOperation(grant))
                 .filter(grant -> repairScopes.isEmpty() || repairScopes.stream().anyMatch(scope ->
                         scope.operation().equals(operationName) && scope.ownerId().equals(grant.targetId())))
                 .map(OperationDescriptor::targetId)
