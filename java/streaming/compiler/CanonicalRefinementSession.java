@@ -512,44 +512,52 @@ public final class CanonicalRefinementSession {
         if (!forcedArtifact.equals("dealui")) artifacts.add("deal");
         if (!forcedArtifact.equals("deal") && inspection.dealUi() != null) artifacts.add("dealui");
         if (artifacts.isEmpty()) artifacts.add(forcedArtifact);
+        List<Map<String, Object>> branches = artifacts.stream()
+                .map(this::inspectChangeBranch)
+                .toList();
+        Map<String, Object> parameters = branches.size() == 1
+                ? branches.get(0)
+                : Map.of("type", "object", "anyOf", branches);
+        return tool("inspect_change",
+                "Select semantic anchors and operation kinds. The compiler derives the minimum dependency cone and writable surface.",
+                parameters);
+    }
+
+    private Map<String, Object> inspectChangeBranch(String artifact) {
         List<String> targets = new ArrayList<>();
-        if (artifacts.contains("deal")) {
+        List<String> operations = new ArrayList<>();
+        if (artifact.equals("deal")) {
             targets.addAll(aliases("M"));
             targets.addAll(aliases("S"));
             targets.addAll(aliases("B"));
-        }
-        if (artifacts.contains("dealui")) {
+            operations.addAll(List.of(
+                    DealCompilerWorkspace.ADD_DECLARATION,
+                    DealCompilerWorkspace.REMOVE_DECLARATION,
+                    DealCompilerWorkspace.REPLACE_DECLARATION,
+                    DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                    DealCompilerWorkspace.REPLACE_BLOCK_BODY));
+        } else {
             targets.addAll(aliases("D"));
             targets.addAll(aliases("V"));
             targets.addAll(aliases("U"));
+            operations.addAll(List.of(
+                    UiCompilerWorkspace.ADD_VIEW,
+                    UiCompilerWorkspace.REMOVE_VIEW,
+                    UiCompilerWorkspace.REPLACE_VIEW_BODY,
+                    UiCompilerWorkspace.REPLACE_SUBTREE,
+                    UiCompilerWorkspace.INSERT_CHILD,
+                    UiCompilerWorkspace.REMOVE_NODE,
+                    UiCompilerWorkspace.MOVE_NODE,
+                    UiCompilerWorkspace.SET_PROPERTY));
         }
-        List<String> operations = new ArrayList<>();
-        if (artifacts.contains("deal")) operations.addAll(List.of(
-                DealCompilerWorkspace.ADD_DECLARATION,
-                DealCompilerWorkspace.REMOVE_DECLARATION,
-                DealCompilerWorkspace.REPLACE_DECLARATION,
-                DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
-                DealCompilerWorkspace.REPLACE_BLOCK_BODY));
-        if (artifacts.contains("dealui")) operations.addAll(List.of(
-                UiCompilerWorkspace.ADD_VIEW,
-                UiCompilerWorkspace.REMOVE_VIEW,
-                UiCompilerWorkspace.REPLACE_VIEW_BODY,
-                UiCompilerWorkspace.REPLACE_SUBTREE,
-                UiCompilerWorkspace.INSERT_CHILD,
-                UiCompilerWorkspace.REMOVE_NODE,
-                UiCompilerWorkspace.MOVE_NODE,
-                UiCompilerWorkspace.SET_PROPERTY));
-        return tool("inspect_change",
-                "Select semantic anchors and operation kinds. The compiler derives the minimum dependency cone and writable surface.",
-                objectSchema(Map.of(
-                        "artifact", artifacts.size() == 1
-                                ? constantString(artifacts.get(0)) : enumSchema(artifacts),
-                        "anchors", Map.of(
-                                "type", "array", "minItems", 1, "uniqueItems", true,
-                                "items", enumSchema(targets)),
-                        "requestedOperations", Map.of(
-                                "type", "array", "minItems", 1, "uniqueItems", true,
-                                "items", enumSchema(operations)))));
+        return objectSchema(Map.of(
+                "artifact", constantString(artifact),
+                "anchors", Map.of(
+                        "type", "array", "minItems", 1, "uniqueItems", true,
+                        "items", enumSchema(targets)),
+                "requestedOperations", Map.of(
+                        "type", "array", "minItems", 1, "uniqueItems", true,
+                        "items", enumSchema(operations))));
     }
 
     private Map<String, Object> repairSlotTool() {

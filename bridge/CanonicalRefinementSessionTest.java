@@ -43,6 +43,7 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         inspectChangeUnlocksCompilerOwnedCone();
+        inspectChangeSchemaKeepsArtifactAnchorsDisjoint();
         rejectedDealBodyNarrowsRepairAndRollsForward();
         unqueriedAliasCannotBeWritten();
         batchedQueriesConsumeOneProviderRound();
@@ -60,6 +61,38 @@ public final class CanonicalRefinementSessionTest {
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void inspectChangeSchemaKeepsArtifactAnchorsDisjoint() {
+        var session = new CanonicalRefinementSession(
+                DEAL, UI, PACK, "./ui.pack", "Add an undo control and update its behavior", 4, 1);
+        CanonicalJson.Obj request = object(session.nextRequestJson());
+        CanonicalJson.Arr tools = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(request, "tools"), "tools");
+        CanonicalJson.Obj inspect = tools.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "tool"))
+                .filter(value -> stringField(value, "name").equals("inspect_change"))
+                .findFirst().orElseThrow();
+        CanonicalJson.Obj parameters = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.field(inspect, "parameters"), "parameters");
+        CanonicalJson.Arr branches = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(parameters, "anyOf"), "inspect branches");
+        check(branches.items().size() == 2,
+                "mixed refinement must publish separate DEAL and Deal UI schema branches");
+        for (CanonicalJson.Value value : branches.items()) {
+            String encoded = CompilerProtocolJson.encode(value);
+            CanonicalJson.Obj branch = CompilerProtocolJson.requireObject(value, "inspect branch");
+            CanonicalJson.Obj properties = CompilerProtocolJson.requireObject(
+                    CompilerProtocolJson.field(branch, "properties"), "properties");
+            String artifact = stringField(
+                    CompilerProtocolJson.requireObject(
+                            CompilerProtocolJson.field(properties, "artifact"), "artifact"),
+                    "const");
+            check(artifact.equals("deal")
+                            ? !encoded.contains("\"V1\"") && !encoded.contains("\"U1\"")
+                            : !encoded.contains("\"S1\"") && !encoded.contains("\"B1\""),
+                    "inspect branch must not admit anchors owned by the other artifact: " + encoded);
+        }
     }
 
     private static void numericStringRepairExplainsTypedUiFormatting() {
