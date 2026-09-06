@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v8";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v9";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -2054,23 +2054,30 @@ public final class CanonicalRefinementSession {
         return operation + ":" + target.value() + ":" + field;
     }
 
-    private static Map<String, Object> compactDiagnostics(List<StructuredDiagnostic> diagnostics) {
+    static Map<String, Object> compactDiagnostics(List<StructuredDiagnostic> diagnostics) {
         Map<String, Integer> counts = new LinkedHashMap<>();
         List<Map<String, Object>> examples = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         for (StructuredDiagnostic diagnostic : diagnostics) {
             counts.merge(diagnostic.code(), 1, Integer::sum);
-            String identity = diagnostic.code() + "\u0000" + diagnostic.message();
+            String identity = CompilerProtocolJson.encode(diagnostic);
             if (!seen.add(identity) || examples.size() >= 6) continue;
             Map<String, Object> example = new LinkedHashMap<>();
             example.put("code", diagnostic.code());
             example.put("message", diagnostic.message());
+            example.put("severity", diagnostic.severity());
             if (!diagnostic.expected().isBlank()) example.put("expected", diagnostic.expected());
             if (!diagnostic.actual().isBlank()) example.put("actual", diagnostic.actual());
-            if (diagnostic.range() != null) example.put("range", diagnostic.range());
+            if (diagnostic.context() != null) example.put("context", Map.of(
+                    "version", diagnostic.context().version(),
+                    "excerpt", diagnostic.context().excerpt(),
+                    "truncated", diagnostic.context().truncated()));
+            if (!diagnostic.notes().isEmpty()) example.put("notes", diagnostic.notes().stream()
+                    .map(note -> note.message()).toList());
             examples.add(Map.copyOf(example));
         }
-        return Map.of("counts", counts, "examples", examples);
+        return Map.of("counts", counts, "examples", examples,
+                "uniqueCount", seen.size(), "omittedCount", Math.max(0, seen.size() - examples.size()));
     }
 
     private void unchanged() {

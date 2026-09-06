@@ -42,6 +42,7 @@ public final class CanonicalRefinementSessionTest {
     private CanonicalRefinementSessionTest() {}
 
     public static void main(String[] args) {
+        diagnosticCompactionPreservesLocationsAndEvidence();
         inspectChangeUnlocksCompilerOwnedCone();
         stateSchemaEvolutionUsesOneAtomicTool();
         refinementPromptDistinguishesValidityFromRequestCompletion();
@@ -571,6 +572,14 @@ public final class CanonicalRefinementSessionTest {
                 CompilerProtocolJson.field(repairInput, "repairWorkspace"), "repair workspace");
         CanonicalJson.Obj activeSlot = CompilerProtocolJson.requireObject(
                 CompilerProtocolJson.field(repairWorkspace, "activeSlot"), "active repair slot");
+        CanonicalJson.Obj diagnostics = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.field(activeSlot, "diagnostics"), "slot diagnostics");
+        CanonicalJson.Arr examples = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(diagnostics, "examples"), "diagnostic examples");
+        CanonicalJson.Obj evidence = CompilerProtocolJson.requireObject(CompilerProtocolJson.field(
+                CompilerProtocolJson.requireObject(examples.items().get(0), "diagnostic"), "context"), "evidence");
+        check(stringField(evidence, "excerpt").contains("return missing"),
+                "slot evidence must refer to rejected candidate, not previous accepted body");
         check(repairRequest.contains("compiler target " + body)
                         && stringField(activeSlot, "target").equals(body),
                 "the narrow repair surface must identify the immutable compiler target");
@@ -830,6 +839,28 @@ public final class CanonicalRefinementSessionTest {
                 "the UI index must expose compact hierarchy for selecting the smallest cone");
         check(request.contains("declarative and read-only"),
                 "the UI inspection phase must publish the Deal UI contract");
+    }
+
+    private static void diagnosticCompactionPreservesLocationsAndEvidence() {
+        var diagnostics = new java.util.ArrayList<deal.compiler.CompilerProtocol.StructuredDiagnostic>();
+        for (int line = 1; line <= 7; line++) {
+            diagnostics.add(new deal.compiler.CompilerProtocol.StructuredDiagnostic("E1015", "error", "Expected ')'",
+                    new deal.compiler.CompilerProtocol.SourceRange("app.deal", line, 2, line, 3),
+                    new deal.compiler.CompilerProtocol.SemanticId("test"), ")", "unexpected",
+                    List.of(), List.of(), "", null,
+                    List.of(new deal.diagnostics.DiagnosticNote("expected/found evidence", null)))
+                    .withSourceContext("bad\n".repeat(8)));
+        }
+        diagnostics.add(diagnostics.get(0));
+        var compact = CanonicalRefinementSession.compactDiagnostics(diagnostics);
+        check(compact.get("uniqueCount").equals(7) && compact.get("omittedCount").equals(1),
+                "same code/message at different locations must not silently collapse");
+        var encoded = CompilerProtocolJson.encode(compact);
+        check(encoded.contains("diagnostic-context-v1") && encoded.contains("expected/found evidence")
+                        && encoded.contains("severity"), "evidence and severity must reach the agent");
+        check(!encoded.contains("sourceDigest") && !encoded.contains("startLine")
+                        && !encoded.contains("ownerId"),
+                "rich diagnostic coordinates and identities must stay outside the agent surface");
     }
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
