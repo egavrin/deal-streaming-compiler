@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v5";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v6";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -47,8 +47,10 @@ public final class CanonicalRefinementSession {
             scopes are authoritative. Use no scenario templates. Set final to false only when another
             behavior or visual transaction is required. The surface has distinct inspect and edit
             phases. In the inspect phase call inspect_deal_change or inspect_deal_ui_change once with every required semantic anchor
-            and operation kind. In the edit phase call the single write tool directly. Emit exactly
-            one write tool call.
+            and operation kind. In the edit phase call the scoped write tool directly. For a UI subtree,
+            query_ui_contracts may first request missing component and action contracts without changing
+            the writable scope. Use lexicalBindings and bindingTypes for enclosing ForEach items.
+            Emit exactly one tool call per response; batch dependent edits inside that tool.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             Inspecting a DEAL symbol or body also unlocks adding a new sibling declaration when the
@@ -89,7 +91,7 @@ public final class CanonicalRefinementSession {
             compiler surface. Submit bootstrap and bounded behavior tools directly from the current
             compiler-owned stage; do not query declarations that the stage already publishes. Submit one
             cohesive atomic transaction. Emit exactly one write tool call; read-only queries may
-            be batched. Set final=true only when behavior is complete. For a complex application,
+            use a separate response. Set final=true only when behavior is complete. For a complex application,
             set final=false and continue with another small transaction.
             Never return prose.
             Obey generationStage. In bootstrap, replace AppState and initialState and add any
@@ -147,7 +149,7 @@ public final class CanonicalRefinementSession {
             Create the complete Deal UI presentation for the supplied compiler-extracted
             AppInterface. The compiler already exposes the bootstrap root view; replace its body directly in one atomic UI
             transaction and mark it final. Emit exactly one write tool call; read-only queries may
-            be batched. The replacement body contains only statements inside the existing view:
+            use a separate response. The replacement body contains only statements inside the existing view:
             omit the view signature and outer braces. Use only operations in the current tool
             schema. Never return prose.
             Deal UI is declarative and read-only. Use only components and tokens in componentPack,
@@ -189,6 +191,8 @@ public final class CanonicalRefinementSession {
     private String rejectedAttemptFingerprint = "";
     private RepairWorkspaceSnapshot repairWorkspace;
     private UiCompilerWorkspace.UiEditSurface uiEditSurface;
+    private List<Map<String, Object>> issuedTools = List.of();
+    private Map<String, Object> requestedUiContracts = Map.of();
     private String repairArtifact = "";
     private boolean repairFinal;
     private boolean repairReplacesAppState;
@@ -278,6 +282,7 @@ public final class CanonicalRefinementSession {
         }
         String input = input();
         List<Map<String, Object>> tools = tools();
+        issuedTools = List.copyOf(tools);
         String encodedTools = CompilerProtocolJson.encode(tools);
         String surfaceDigest = DealCompilerWorkspace.digest(input + "\u0000" + encodedTools);
         Map<String, Object> request = new LinkedHashMap<>();
@@ -316,34 +321,108 @@ public final class CanonicalRefinementSession {
 
     public String acceptToolCallJson(String name, String argumentsJson) {
         if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
+        CanonicalJson.Obj arguments = CompilerProtocolJson.requireObject(
+                decodeToolJson(argumentsJson), "tool arguments");
+        validateIssuedCall(name, arguments);
         rounds++;
         if (!isReadOnlyQuery(name)) writeRounds++;
-        CanonicalJson.Obj arguments = CompilerProtocolJson.requireObject(
-                CompilerProtocolJson.decode(argumentsJson), "tool arguments");
+        issuedTools = List.of();
         acceptToolCall(name, arguments);
         return status == Status.REQUEST ? nextRequestJson() : resultJson();
     }
 
-    /** Accepts one provider turn; multiple calls are permitted only for read-only context queries. */
-    public String acceptToolCallsJson(String callsJson) {
-        if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
-        CanonicalJson.Arr calls = CompilerProtocolJson.requireArray(
-                CompilerProtocolJson.decode(callsJson), "tool calls");
-        if (calls.items().isEmpty()) throw new IllegalArgumentException("A provider turn requires at least one tool call");
-        List<CanonicalJson.Obj> values = calls.items().stream()
-                .map(value -> CompilerProtocolJson.requireObject(value, "tool call"))
-                .toList();
-        if (values.size() > 1 && values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) {
-            throw new IllegalArgumentException("A provider turn may batch only read-only compiler queries");
+    /** Validates transport and current grants without consuming a round or changing the graph. */
+    public String validateToolCallsJson(String callsJson) {
+        try {
+            checkedToolCalls(callsJson);
+            return CompilerProtocolJson.encode(Map.of("valid", true));
+        } catch (IllegalArgumentException failure) {
+            return CompilerProtocolJson.encode(Map.of("valid", false, "error", failure.getMessage()));
         }
+    }
+
+    private static CanonicalJson.Value decodeToolJson(String json) {
+        try { return CompilerProtocolJson.decode(json); }
+        catch (RuntimeException failure) { throw new IllegalArgumentException("Invalid tool JSON: " + failure.getMessage(), failure); }
+    }
+
+    private List<CanonicalJson.Obj> checkedToolCalls(String callsJson) {
+        if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
+        CanonicalJson.Arr calls = CompilerProtocolJson.requireArray(decodeToolJson(callsJson), "tool calls");
+        List<CanonicalJson.Obj> values = calls.items().stream()
+                .map(value -> CompilerProtocolJson.requireObject(value, "tool call")).toList();
+        if (values.size() != 1) throw new IllegalArgumentException("The current agent surface requires exactly one tool call");
+        for (CanonicalJson.Obj value : values) validateIssuedCall(string(value, "name"),
+                CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
+        return values;
+    }
+
+    /** Accepts exactly one currently granted tool per provider turn. */
+    public String acceptToolCallsJson(String callsJson) {
+        List<CanonicalJson.Obj> values = checkedToolCalls(callsJson);
         rounds++;
         if (values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) writeRounds++;
+        issuedTools = List.of();
         for (CanonicalJson.Obj value : values) {
             acceptToolCall(
                     string(value, "name"),
                     CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
         }
         return status == Status.REQUEST ? nextRequestJson() : resultJson();
+    }
+
+    private void validateIssuedCall(String name, CanonicalJson.Obj arguments) {
+        Map<String, Object> tool = issuedTools.stream().filter(value -> name.equals(value.get("name")))
+                .findFirst().orElseThrow(() -> new IllegalArgumentException("Tool is not granted by the current surface: " + name));
+        validateSchema(arguments, (Map<?, ?>) tool.get("parameters"));
+    }
+
+    private static void validateSchema(CanonicalJson.Value value, Map<?, ?> schema) {
+        if (schema.containsKey("const") && !CompilerProtocolJson.encode(value).equals(CompilerProtocolJson.encode(schema.get("const"))))
+            throw new IllegalArgumentException("Tool argument violates const");
+        if (schema.get("enum") instanceof List<?> options && options.stream().noneMatch(option ->
+                CompilerProtocolJson.encode(value).equals(CompilerProtocolJson.encode(option))))
+            throw new IllegalArgumentException("Tool argument is outside the granted enum");
+        Object variants = schema.containsKey("oneOf") ? schema.get("oneOf") : schema.get("anyOf");
+        if (variants instanceof List<?> alternatives) {
+            int matches = 0;
+            for (Object alternative : alternatives) {
+                try { validateSchema(value, (Map<?, ?>) alternative); matches++; }
+                catch (IllegalArgumentException ignored) { }
+            }
+            if (matches == 0 || schema.containsKey("oneOf") && matches != 1)
+                throw new IllegalArgumentException("Tool argument does not match a granted operation");
+        }
+        Object type = schema.get("type");
+        if ("object".equals(type)) {
+            CanonicalJson.Obj object = CompilerProtocolJson.requireObject(value, "tool object");
+            Map<?, ?> properties = (Map<?, ?>) schema.get("properties");
+            if (schema.get("required") instanceof List<?> required) for (Object key : required)
+                if (object.entries().stream().noneMatch(entry -> entry.key().equals(key)))
+                    throw new IllegalArgumentException("Missing tool argument: " + key);
+            for (var entry : object.entries()) {
+                if (!properties.containsKey(entry.key())) throw new IllegalArgumentException("Unexpected tool argument: " + entry.key());
+                validateSchema(entry.value(), (Map<?, ?>) properties.get(entry.key()));
+            }
+        } else if ("array".equals(type)) {
+            CanonicalJson.Arr array = CompilerProtocolJson.requireArray(value, "tool array");
+            if (schema.get("minItems") instanceof Number min && array.items().size() < min.intValue()
+                    || schema.get("maxItems") instanceof Number max && array.items().size() > max.intValue())
+                throw new IllegalArgumentException("Tool array size is outside the grant");
+            if (Boolean.TRUE.equals(schema.get("uniqueItems")) && array.items().stream().distinct().count() != array.items().size())
+                throw new IllegalArgumentException("Tool array requires unique values");
+            for (var item : array.items()) validateSchema(item, (Map<?, ?>) schema.get("items"));
+        } else if ("string".equals(type)) {
+            if (!(value instanceof CanonicalJson.Str string)) throw new IllegalArgumentException("Expected tool string");
+            if (schema.get("maxLength") instanceof Number max && string.value().length() > max.intValue())
+                throw new IllegalArgumentException("Tool string exceeds the grant");
+        } else if ("boolean".equals(type) && !(value instanceof CanonicalJson.Bool)) {
+            throw new IllegalArgumentException("Expected tool boolean");
+        } else if ("integer".equals(type)) {
+            if (!(value instanceof CanonicalJson.Int number)) throw new IllegalArgumentException("Expected tool integer");
+            if (schema.get("minimum") instanceof Number min && number.value() < min.intValue())
+                throw new IllegalArgumentException("Tool integer is below the grant");
+        }
     }
 
     private void acceptToolCall(String name, CanonicalJson.Obj arguments) {
@@ -356,6 +435,14 @@ public final class CanonicalRefinementSession {
             case "query_deal_ui_node" -> queryDealUiNode(string(arguments, "target"));
             case "inspect_deal_change" -> inspectChange("deal", arguments);
             case "inspect_deal_ui_change" -> inspectChange("dealui", arguments);
+            case "query_ui_contracts" -> {
+                List<String> components = stringArray(arguments, "components");
+                List<String> actions = stringArray(arguments, "actions");
+                requestedUiContracts = Map.of(
+                        "components", inspection.componentPack().components().stream().filter(value -> components.contains(value.name())).toList(),
+                        "actions", inspection.deal().appInterface().actions().stream().filter(value -> actions.contains(value.name()))
+                                .map(value -> Map.of("name", value.name(), "fields", value.fields())).toList());
+            }
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
             case "append_deal_behavior" -> appendDealBehavior(arguments);
             case "evolve_deal_state" -> evolveDealState(arguments);
@@ -376,6 +463,7 @@ public final class CanonicalRefinementSession {
 
     private static boolean isReadOnlyQuery(String name) {
         return name.equals("query_deal_module")
+                || name.equals("query_ui_contracts")
                 || name.equals("inspect_deal_change")
                 || name.equals("inspect_deal_ui_change")
                 || name.equals("query_deal_symbol")
@@ -412,6 +500,7 @@ public final class CanonicalRefinementSession {
         context.put("request", instruction);
         if (uiEditSurface != null) {
             context.put("uiEditSurface", compactUiEditSurface(uiEditSurface));
+            if (!requestedUiContracts.isEmpty()) context.put("requestedContracts", requestedUiContracts);
         } else {
             context.put("deal", compactDealIndex());
             if (inspection.dealUi() != null) {
@@ -553,6 +642,13 @@ public final class CanonicalRefinementSession {
         }
         if (!replaceSubtreeGrants.isEmpty() && !generation) {
             result.add(replaceDealUiSubtreeTool(replaceSubtreeGrants));
+            if (uiEditSurface != null && requestedUiContracts.isEmpty()) result.add(tool(
+                    "query_ui_contracts", "Read missing component or action contracts before replacing the selected subtree. Does not grant other writes.",
+                    objectSchema(Map.of(
+                            "components", Map.of("type", "array", "maxItems", 8, "uniqueItems", true, "items", enumSchema(
+                                    inspection.componentPack().components().stream().map(CanonicalCompiler.ComponentSnapshot::name).toList())),
+                            "actions", Map.of("type", "array", "maxItems", 8, "uniqueItems", true, "items", enumSchema(
+                                    inspection.deal().appInterface().actions().stream().map(CompilerProtocol.TypeSnapshot::name).toList()))))));
         }
         if (!uiOperations.isEmpty()) {
             result.add(transactionTool(
@@ -2062,6 +2158,7 @@ public final class CanonicalRefinementSession {
         dealUiGrants.clear();
         queriedAliases.clear();
         uiEditSurface = null;
+        requestedUiContracts = Map.of();
         refreshAliases();
     }
 
@@ -2242,6 +2339,9 @@ public final class CanonicalRefinementSession {
         if (surface.parent() != null) result.put("parent", compactUiEditNode(surface.parent()));
         result.put("children", surface.children().stream().map(this::compactUiEditNode).toList());
         result.put("statePaths", surface.statePaths());
+        result.put("lexicalBindings", surface.lexicalBindings());
+        result.put("bindingTypes", surface.bindingTypes().stream().map(value -> Map.of("name", value.name(), "fields", value.fields())).toList());
+        result.put("tokens", inspection.componentPack().tokens());
         result.put("compatibleActions", surface.compatibleActions().stream().map(action -> Map.of(
                 "name", action.name(),
                 "fields", action.fields())).toList());

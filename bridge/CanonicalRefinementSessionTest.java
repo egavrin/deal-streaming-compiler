@@ -58,6 +58,7 @@ public final class CanonicalRefinementSessionTest {
         interfaceChangeUsesMinimalChildInsertion();
         subtreeReplacementPreservesUnrelatedSiblings();
         subtreeWriteSurfaceOmitsCanonicalSourcesAndIndexes();
+        missingUiContractsAreReadWithoutBroadeningGrants();
         uiOnlyChangeNeverTouchesDeal();
         uiViewQueryCanAddAView();
         greenfieldBuildsDealBeforeDealUi();
@@ -80,8 +81,9 @@ public final class CanonicalRefinementSessionTest {
     private static void refinementActionInsertionCanContinueInDeal() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Add pause and restart actions", 4, 1);
+        session.nextRequestJson();
         String edit = session.acceptToolCallJson(
-                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+                "inspect_deal_change", CompilerProtocolJson.encode(Map.of("anchors", List.of("M1"), "requestedOperations", List.of("addDeclaration"))));
         check(toolNames(edit).contains("add_deal_action_handler"),
                 "module inspection must expose semantic action insertion");
         String next = session.acceptToolCallJson("add_deal_action_handler", CompilerProtocolJson.encode(Map.of(
@@ -106,30 +108,11 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void oversizedFoundationRetriesWithoutCrashingOrConsumingRepair() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create a recurring workout schedule", 8, 2);
-        session.nextRequestJson();
-        StringBuilder body = new StringBuilder("let items: int[] = [];\n");
-        for (int index = 0; index < 800; index++) {
-            body.append("items[items.length] = ").append(index).append(";\n");
-        }
-        body.append("return {title: \"Health\", count: 0};");
-        String retry = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
-                "supportingDeclarations", List.of(),
-                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
-                "initialStateBody", body.toString())));
-        check(toolNames(retry).contains("apply_deal_foundation"),
-                "an oversized foundation must retain the narrow bootstrap tool");
-        check(retry.contains("SC2003") && retry.contains("workspaceChanged\\\":false")
-                        && retry.contains("semanticRepairConsumed\\\":false"),
-                "an Agent Surface violation must be recoverable and must not consume semantic repair: " + retry);
-
-        String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
-                "supportingDeclarations", List.of(),
-                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
-                "initialStateBody", "return {title: \"Health\", count: 0};")));
-        check(toolNames(behavior).contains("append_deal_behavior"),
-                "a compact retry must continue generation in the same workspace");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2);
+        String initial = session.nextRequestJson();
+        expectRejected(() -> session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of("supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }", "initialStateBody", " ".repeat(7000)))));
+        check(session.nextRequestJson().equals(initial), "schema rejection preserves grants and budgets");
+        check(toolNames(counterFoundation(session)).contains("append_deal_behavior"), "valid retry uses same grant");
     }
 
     private static void greenfieldBehaviorBatchesAreCompilerBounded() {
@@ -140,6 +123,7 @@ public final class CanonicalRefinementSessionTest {
                 "foundation must admit a compact mutually dependent record group");
         String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
+                "capabilities", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
                 "initialStateBody", "return {title: \"Ready\", count: 0};")));
         check(behavior.contains("\"maxItems\":4"),
@@ -150,14 +134,11 @@ public final class CanonicalRefinementSessionTest {
                 "handlerDeclaration", "// @ui-update\n"
                         + "export function increment(state: AppState, action: IncrementAction): AppState { "
                         + "return {title: state.title, count: state.count + 1}; }");
-        String rejected = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+        expectRejected(() -> session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
                 "actionHandlers", List.of(pair, pair, pair, pair, pair),
-                "final", false)));
-        check(toolNames(rejected).contains("append_deal_behavior")
-                        && rejected.contains("SC2005")
-                        && rejected.contains("semanticRepairConsumed\\\":false"),
-                "the compiler must recoverably reject an oversized behavior batch without consuming semantic repair");
+                "final", false))));
+        check(session.nextRequestJson().equals(behavior), "oversized batch preserves source, grants and budgets");
     }
 
     private static void inspectChangeSchemaKeepsArtifactAnchorsDisjoint() {
@@ -202,6 +183,7 @@ public final class CanonicalRefinementSessionTest {
         String initial = session.nextRequestJson();
         String foundation = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
+                "capabilities", List.of(),
                 "appStateDeclaration", "export class AppState { label: string = \"\"; count: int = 0; }",
                 "initialStateBody", "return {label: \"Ready\", count: 0};")));
         check(toolNames(foundation).contains("append_deal_behavior"),
@@ -213,7 +195,7 @@ public final class CanonicalRefinementSessionTest {
                         "handlerDeclaration", "// @ui-update\n"
                                 + "export function increment(state: AppState, action: IncrementAction): AppState { "
                                 + "return {label: \"Count: \" + (state.count + 1), count: state.count + 1}; }")),
-                "final", true)));
+                "final", false)));
         check(toolNames(repair).contains("patch_repair_slot"),
                 "mixed numeric/string behavior must enter a narrow repair slot");
         check(repair.contains("preserve numeric state for typed UI formatting")
@@ -250,6 +232,7 @@ public final class CanonicalRefinementSessionTest {
                         && initial.contains("Return one complete AppState value"),
                 "greenfield bootstrap must publish the collection and return contracts");
         String repair = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "capabilities", List.of(),
                 "supportingDeclarations", List.of(
                         "export class Item { id: string = \"\"; label: string = \"\"; }"),
                 "appStateDeclaration",
@@ -274,6 +257,7 @@ public final class CanonicalRefinementSessionTest {
         session.nextRequestJson();
         String behavior = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
+                "capabilities", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
                 "initialStateBody", "return {title: \"Counter\", count: 0};")));
         check(toolNames(behavior).contains("append_deal_behavior"), "foundation must advance to behavior");
@@ -287,7 +271,7 @@ public final class CanonicalRefinementSessionTest {
                         "handlerDeclaration", "// @ui-update\n"
                                 + "export function increment(state: AppState, action: IncrementAction): AppState { "
                                 + "return {title: state.title, count: state.count + 1}; }")),
-                "final", true)));
+                "final", false)));
         check(toolNames(repair).containsAll(List.of("patch_repair_slot", "drop_repair_slot")),
                 "an optional rejected declaration must be patchable or droppable");
         String completionAudit = session.acceptToolCallJson("drop_repair_slot", CompilerProtocolJson.encode(Map.of(
@@ -375,10 +359,7 @@ public final class CanonicalRefinementSessionTest {
         String appState = dealSymbolAlias(initial, "AppState");
         String initialState = dealSymbolAlias(initial, "initialState");
         String initialBody = dealBodyAlias(initial, initialState);
-        String foundationRequest = session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)),
-                Map.of("name", "query_deal_module", "arguments", Map.of("target", "M1")))));
+        String foundationRequest = initial;
         check(toolNames(foundationRequest).contains("apply_deal_foundation"),
                 "bootstrap must collapse rich ChangeSet operations into one compact agent handle");
         check(foundationRequest.contains("stable unique id"),
@@ -388,6 +369,7 @@ public final class CanonicalRefinementSessionTest {
         String declarations = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(
                         "export class Item { id: int = 0; label: string = \"\"; }"),
+                "capabilities", List.of(),
                 "appStateDeclaration", "export class AppState { count: int = 0; items: Item[] = []; }",
                 "initialStateBody", "return {count: 0, items: []};")));
         check(toolNames(declarations).contains("append_deal_behavior")
@@ -397,7 +379,7 @@ public final class CanonicalRefinementSessionTest {
                 "supportingDeclarations", List.of(),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class IncrementAction {}",
-                        "handlerDeclaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1}; }")),
+                        "handlerDeclaration", "// @ui-update\nexport function increment(state: AppState, action: IncrementAction): AppState { return {count: state.count + 1, items: state.items}; }")),
                 "final", false)));
         check(toolNames(moreBehavior).contains("append_deal_behavior"),
                 "a non-final behavior batch must commit and expose another compact behavior surface");
@@ -407,8 +389,8 @@ public final class CanonicalRefinementSessionTest {
                 "supportingDeclarations", List.of(),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class ResetAction {}",
-                        "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {count: 0}; }")),
-                "final", true)));
+                        "handlerDeclaration", "// @ui-update\nexport function reset(state: AppState, action: ResetAction): AppState { return {count: 0, items: state.items}; }")),
+                "final", false)));
         check(toolNames(completionAudit).contains("finish_deal")
                         && !toolNames(completionAudit).contains("apply_deal_ui_changes"),
                 "a bounded behavior write must enter an explicit completion audit");
@@ -438,10 +420,8 @@ public final class CanonicalRefinementSessionTest {
         check(initial.contains("never place the\\nmarker after the opening brace"),
                 "the surface must publish exact framework marker placement");
         String view = uiViewAlias(dealAccepted, "App");
-        String uiWrite = session.acceptToolCallJson(
-                "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", view)));
         String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(List.of(
-                Map.of("operation", "replaceViewBody", "target", view,
+                Map.of("operation", "replaceViewBody",
                         "body", "ui.Column() { ui.Text(value: \"Counter\") ui.Button(text: \"Add\", onClick: action app.IncrementAction {}) ui.Button(text: \"Reset\", onClick: action app.ResetAction {}) }")),
                 true));
         CanonicalJson.Obj object = object(result);
@@ -451,142 +431,40 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void greenfieldFinalFalseKeepsBuildingDeal() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create a complex app", 6, 2);
-        String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        String initialState = dealSymbolAlias(initial, "initialState");
-        String initialBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
-        String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { count: int = 0; }"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {count: 0};")), false));
-        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
-                CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
-        check(stringField(input, "requiredArtifact").equals("deal"),
-                "final=false must keep complex greenfield generation in DEAL");
-        check(toolNames(next).contains("append_deal_behavior")
-                        && !toolNames(next).contains("inspect_deal_change"),
-                "the compiler-owned declarations stage must expose its bounded write directly");
-        check(!toolNames(next).contains("query_deal_symbol"),
-                "completed bootstrap declarations must become read-only index entries");
-        check(!toolNames(next).contains("query_deal_node"),
-                "completed bootstrap bodies must not distract later greenfield rounds");
-        check(stringField(input, "generationStage").equals("declarations"),
-                "the compact input must identify the declarations-only stage");
-        check(stringField(input, "stageObjective").contains("committed"),
-                "the compact input must state that bootstrap symbols are immutable");
-        check(!toolNames(next).contains("finish_deal"),
-                "declarations stage must not finish a generated mini-app without an action");
-        check(!next.contains("\"operation\":{\"const\":\"replaceDeclaration\"}"),
-                "accepted AppState bootstrap must not be replaceable again");
-        check(!next.contains("\"operation\":{\"const\":\"replaceFunctionBody\"}"),
-                "accepted initialState bootstrap must not be replaceable again");
-        check(!toolNames(next).contains("query_deal_ui_view"),
-                "Deal UI must remain hidden until DEAL final=true");
-        String withBehavior = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
-                "supportingDeclarations", List.of(),
-                "actionHandlers", List.of(Map.of(
-                        "actionDeclaration", "export class IncrementAction {}",
-                        "handlerDeclaration", "// @ui-update\n"
-                                + "export function increment(state: AppState, action: IncrementAction): AppState { "
-                                + "return {count: state.count + 1}; }")),
-                "final", false)));
-        check(toolNames(withBehavior).contains("finish_deal"),
-                "a checked reachable action must unlock the source-free transition to Deal UI");
-        String ui = session.acceptToolCallJson(
-                "finish_deal", CompilerProtocolJson.encode(Map.of(
-                        "coveredActions", List.of("IncrementAction"),
-                        "reason", "IncrementAction covers the requested interaction")));
-        check(toolNames(ui).contains("apply_deal_ui_changes")
-                        && !toolNames(ui).contains("inspect_deal_ui_change"),
-                "finish_deal must expose the compiler-owned root UI edit directly");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2);
+        session.nextRequestJson(); counterFoundation(session);
+        String behavior = appendRun(session, "Run", "return state;");
+        check(toolNames(behavior).contains("finish_deal"), "behavior requires explicit completion");
+        String ui = session.acceptToolCallJson("finish_deal", CompilerProtocolJson.encode(Map.of("coveredActions", List.of("RunAction"), "reason", "Run covers interaction")));
+        check(toolNames(ui).contains("apply_deal_ui_changes"), "completion exposes UI");
     }
 
     private static void greenfieldCompletesPartialBootstrapWithoutReopeningCommittedState() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create a complex app", 6, 2);
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2);
         String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        session.acceptToolCallJson("query_deal_symbol", CompilerProtocolJson.encode(Map.of(
-                "target", appState)));
-        String next = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration",
-                        "declaration", "export class AppState { title: string = \"\"; count: int = 0; }")), false));
-        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
-                CompilerProtocolJson.decode(stringField(object(next), "input")), "input");
-        check(stringField(input, "generationStage").equals("initial-state"),
-                "partial bootstrap must name its missing unit");
-        check(!toolNames(next).contains("query_deal_module"),
-                "partial bootstrap must not unlock unrelated declarations");
-        check(!next.contains("\"enum\":[\"" + appState + "\"]"),
-                "committed AppState must not remain queryable");
-        check(toolNames(next).contains("inspect_deal_change"),
-                "the missing initialState body must remain inspectable");
-        check(stringField(input, "stageObjective").contains("initialState"),
-                "partial bootstrap must identify the one missing unit");
+        expectRejected(() -> session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of("appStateDeclaration", "export class AppState {}"))));
+        check(session.nextRequestJson().equals(initial), "incomplete foundation cannot partially commit");
+        String next = counterFoundation(session);
+        expectRejected(() -> counterFoundation(session));
+        check(session.nextRequestJson().equals(next), "accepted foundation cannot be reopened");
     }
 
     private static void acceptedChangeSetResetsTheLocalRepairBudget() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create a complex app", 12, 1);
-        String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        String initialState = dealSymbolAlias(initial, "initialState");
-        String initialBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
-        String declarations = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { title: string = \"\"; count: int = 0; }"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {title: \"Ready\", count: 0};")), false));
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        String firstRepair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class One {}\nexport class Two {}")), false));
-        check(stringField(object(firstRepair), "status").equals("request"),
-                "the first invalid ChangeSet must request a local repair");
-        String accepted = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class One {}"),
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class Two {}")), false));
-        check(stringField(object(accepted), "status").equals("request"),
-                "an accepted repair must continue greenfield generation");
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        String secondRepair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class Three {}\nexport class Four {}")), false));
-        check(stringField(object(secondRepair), "status").equals("request"),
-                "a later ChangeSet must receive a fresh local repair budget");
-        CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(secondRepair), "semanticRepairs");
-        check(repairCount instanceof CanonicalJson.Int value && value.value() == 2,
-                "global repair metrics must retain errors from both ChangeSets");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 12, 1);
+        session.nextRequestJson(); counterFoundation(session);
+        String first = appendRun(session, "One", "return missing;");
+        check(toolNames(first).contains("patch_repair_slot"), "handler enters repair");
+        session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of("slot", "R2", "payload", Map.of("declaration", "// @ui-update\nexport function onOne(state: AppState, action: OneAction): AppState { return state; }"))));
+        String second = appendRun(session, "Two", "return missing;");
+        check(toolNames(second).contains("patch_repair_slot"), "new transaction gets fresh repair budget");
+        check(CompilerProtocolJson.intField(object(second), "semanticRepairs") == 2, "metrics retain both repairs");
     }
 
     private static void greenfieldNoOpBecomesScopedRepair() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create a complex app", 6, 2);
-        String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        session.acceptToolCallJson("query_deal_symbol", CompilerProtocolJson.encode(Map.of(
-                "target", appState)));
-        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { title: string = \"\"; }")), false));
-        check(stringField(object(repair), "status").equals("request"),
-                "a greenfield no-op must request a repair");
-        CanonicalJson.Obj input = CompilerProtocolJson.requireObject(
-                CompilerProtocolJson.decode(stringField(object(repair), "input")), "input");
-        check(CompilerProtocolJson.field(input, "repairDirective") instanceof CanonicalJson.Obj,
-                "a greenfield no-op must expose an explicit repair directive");
-        CanonicalJson.Value repairCount = CompilerProtocolJson.field(object(repair), "semanticRepairs");
-        check(repairCount instanceof CanonicalJson.Int value && value.value() == 1,
-                "a no-op must consume the current ChangeSet repair budget");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2);
+        session.nextRequestJson(); String next = counterFoundation(session);
+        expectRejected(() -> counterFoundation(session));
+        check(session.nextRequestJson().equals(next), "foundation replay cannot consume semantic repair");
     }
 
     private static void refinementNoOpWritesBecomeScopedRepair() {
@@ -617,87 +495,26 @@ public final class CanonicalRefinementSessionTest {
                 "source", "ui.Text(value: state.title)",
                 "final", true)));
         check(uiRepair.contains("\"tools\""), "Deal UI no-op must remain repairable: " + uiRepair);
-        check(toolNames(uiRepair).equals(List.of("replace_deal_ui_subtree")) && uiRepair.contains("SC1002")
+        check(toolNames(uiRepair).contains("replace_deal_ui_subtree") && uiRepair.contains("SC1002")
                         && uiRepair.contains("Never resubmit the previous payload"),
                 "a final refinement write with unchanged Deal UI source must become scoped repair: " + uiRepair);
     }
 
     private static void duplicateGreenfieldDeclarationsCanOnlyFinishDeal() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create an app", 8, 2);
-        String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        String initialState = dealSymbolAlias(initial, "initialState");
-        String initialBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
-        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { title: string = \"Ready\"; }"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {title: \"Ready\"};")), false));
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}"),
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration",
-                        "// @ui-update\nexport function run(state: AppState, action: RunAction): AppState { return state; }")), false));
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", "export class RunAction {}")), false));
-        check(toolNames(repair).contains("finish_deal"),
-                "duplicate-only greenfield repair must allow completion");
-        check(!toolNames(repair).contains("apply_deal_changes"),
-                "duplicate-only greenfield repair must not allow another addDeclaration");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2);
+        session.nextRequestJson(); counterFoundation(session); appendRun(session, "Run", "return state;");
+        String duplicate = appendRun(session, "Run", "return state;");
+        check(!toolNames(duplicate).contains("apply_deal_changes"), "duplicates never unlock broad edits");
+        check(duplicate.contains("finish_deal") || duplicate.contains("patch_repair_slot"), "duplicate stays locally repairable");
     }
 
     private static void stricterCheckedContractBecomesRepairInsteadOfShadowCrash() {
-        var session = CanonicalRefinementSession.greenfield(
-                PACK, "./ui.pack", "Create an app", 8, 2);
-        String initial = session.nextRequestJson();
-        String appState = dealSymbolAlias(initial, "AppState");
-        String initialState = dealSymbolAlias(initial, "initialState");
-        String initialBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
-                Map.of("name", "query_deal_symbol", "arguments", Map.of("target", appState)),
-                Map.of("name", "query_deal_node", "arguments", Map.of("target", initialBody)))));
-        session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "replaceDeclaration", "target", appState,
-                        "declaration", "export class AppState { title: string = \"Ready\"; }"),
-                Map.of("operation", "replaceFunctionBody", "target", initialBody,
-                        "body", "return {title: \"Ready\"};")), false));
-        session.acceptToolCallJson("query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
-        String repair = session.acceptToolCallJson("apply_deal_changes", operationArguments(List.of(
-                Map.of("operation", "addDeclaration", "target", "M1",
-                        "declaration", "export class RunAction {}"),
-                Map.of("operation", "addDeclaration", "target", "M1", "declaration", """
-                        export function run(state: AppState, action: RunAction): AppState {
-                          // @ui-update
-                          return state;
-                        }
-                        """)), false));
-        check(stringField(object(repair), "status").equals("request"),
-                "a stricter checked-contract rejection must remain repairable");
-        check(repair.contains("UI2050"),
-                "the v2 framework diagnostic must reach the repair surface");
-        String repairInput = stringField(object(repair), "input");
-        check(repairInput.contains("\"slot\":\"R2\"")
-                        && repairInput.contains("export function run"),
-                "framework repair must expose only the rejected handler slot");
-        String repaired = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of(
-                "slot", "R2",
-                "payload", Map.of("declaration", """
-                        // @ui-update
-                        export function run(state: AppState, action: RunAction): AppState {
-                          return state;
-                        }
-                        """))));
-        String repairedInput = stringField(object(repaired), "input");
-        check(repairedInput.contains("\"tool\":\"patch_repair_slot\"")
-                        && repairedInput.contains("\"accepted\":true")
-                        && repairedInput.contains("RunAction")
-                        && !toolNames(repaired).contains("patch_repair_slot"),
-                "a narrow framework patch must preserve the action and close the repair workspace");
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2);
+        session.nextRequestJson(); counterFoundation(session);
+        String repair = appendRun(session, "Run", "state.count = 1; return state;");
+        check(toolNames(repair).contains("patch_repair_slot") && repair.contains("UI2050"), "borrowed mutation belongs to handler slot");
+        String fixed = session.acceptToolCallJson("patch_repair_slot", CompilerProtocolJson.encode(Map.of("slot", "R2", "payload", Map.of("declaration", "// @ui-update\nexport function onRun(state: AppState, action: RunAction): AppState { return {title: state.title, count: 1}; }"))));
+        check(!toolNames(fixed).contains("patch_repair_slot") && fixed.contains("RunAction"), "action survives handler repair");
     }
 
     private static void rejectedDealBodyNarrowsRepairAndRollsForward() {
@@ -708,8 +525,8 @@ public final class CanonicalRefinementSessionTest {
         String update = dealSymbolAlias(initial, "update");
         String body = dealBodyAlias(initial, update);
         check(!initial.contains("deal-node:"), "agent surface must not expose compiler NodeIds");
-        String applyRequest = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
-                "target", body)));
+        String applyRequest = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(body), "requestedOperations", List.of("replaceFunctionBody"))));
         check(applyRequest.contains("Statements only; omit declaration signature and outer braces"),
                 "query and write schema must state the function-body replacement contract");
         List<String> applyTools = toolNames(applyRequest);
@@ -718,7 +535,6 @@ public final class CanonicalRefinementSessionTest {
                 "the loaded body alias must not be offered for repeated querying");
         String repairRequest = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
-                "target", body,
                 "body", "return missing;"), true));
         check(repairRequest.contains("patch_repair_slot"), "repair must expose only the rejected slot tool");
         check(!repairRequest.contains("apply_deal_changes"), "repair must hide the broad transaction tool");
@@ -789,7 +605,7 @@ public final class CanonicalRefinementSessionTest {
         String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of(column),
                 "requestedOperations", List.of("replaceSubtree"))));
-        check(toolNames(write).equals(List.of("replace_deal_ui_subtree")),
+        check(toolNames(write).equals(List.of("replace_deal_ui_subtree", "query_ui_contracts")),
                 "an unreachable new action must expose only replacement of the selected container subtree");
         String result = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
                 "target", column,
@@ -852,19 +668,20 @@ public final class CanonicalRefinementSessionTest {
         check(stringField(surface, "source").equals("ui.Text(value: state.title)"),
                 "the write surface must expose only the selected canonical subtree");
         check(CompilerProtocolJson.encode(surface).contains("state.title")
-                        && CompilerProtocolJson.encode(surface).contains("IncrementAction")
+                        && CompilerProtocolJson.encode(surface).contains("lexicalBindings")
                         && CompilerProtocolJson.encode(surface).contains("replaceSubtree"),
                 "the write surface must retain state, compatible actions and its sole operation");
         check(!CompilerProtocolJson.encode(surface).contains("ui.Button(text: \\\"Add\\\"")
                         && !CompilerProtocolJson.encode(surface).contains("export class AppState"),
                 "the write surface must not leak siblings or full canonical sources");
-        check(toolNames(write).equals(List.of("replace_deal_ui_subtree")),
+        check(toolNames(write).equals(List.of("replace_deal_ui_subtree", "query_ui_contracts")),
                 "the selected subtree round must expose exactly one write tool: " + toolNames(write));
     }
 
     private static void rawDeclarationInsertionIsHiddenBehindSemanticTools() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Add a helper and an undo action", 6, 2);
+        session.nextRequestJson();
         String write = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
                 "anchors", List.of("M1"),
                 "requestedOperations", List.of("addDeclaration"))));
@@ -875,6 +692,28 @@ public final class CanonicalRefinementSessionTest {
                 "the LLM must not see raw addDeclaration during refinement");
     }
 
+    private static void missingUiContractsAreReadWithoutBroadeningGrants() {
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Make the title a button", 5, 1);
+        String initial = session.nextRequestJson();
+        String target = uiNodeAlias(initial, "ui.Text");
+        String selected = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(target), "requestedOperations", List.of("replaceSubtree"))));
+        expectRejected(() -> session.acceptToolCallJson("replace_deal_ui_subtree", "{bad"));
+        check(!booleanField(object(session.validateToolCallsJson("{bad")), "valid"), "transport preflight rejects malformed JSON");
+        check(!booleanField(object(session.validateToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of(
+                "name", "query_deal_ui_document", "arguments", Map.of()))))), "valid"), "transport preflight rejects hidden tools");
+        check(session.nextRequestJson().equals(selected), "malformed JSON cannot consume grants or rounds");
+        String enriched = session.acceptToolCallJson("query_ui_contracts", CompilerProtocolJson.encode(Map.of(
+                "components", List.of("Button"), "actions", List.of("IncrementAction"))));
+        check(enriched.contains("requestedContracts") && enriched.contains("onClick"), "missing component event contract is available");
+        check(toolNames(enriched).equals(List.of("replace_deal_ui_subtree")), "contract reads grant only the original subtree write");
+        check(!stringField(object(enriched), "input").contains("ui.Button(text: \"Add\""), "contract read cannot reveal sibling source");
+        String result = session.acceptToolCallJson("replace_deal_ui_subtree", CompilerProtocolJson.encode(Map.of(
+                "target", target, "source", "ui.Button(text: state.title, onClick: action app.IncrementAction {})", "final", true)));
+        check(booleanField(object(result), "accepted"), "new component substitution compiles against requested contract");
+        check(stringField(object(result), "deal").equals(DEAL), "contract lookup and UI replacement preserve DEAL");
+    }
+
     private static void uiViewQueryCanAddAView() {
         var session = new CanonicalRefinementSession(
                 DEAL, UI, PACK, "./ui.pack", "Add a reusable detail view", 4, 1);
@@ -882,21 +721,12 @@ public final class CanonicalRefinementSessionTest {
         check(!toolNames(initial).contains("query_deal_ui_document"),
                 "the compact surface must hide rich document inspection");
         String appView = uiViewAlias(initial, "App");
-        String applyRequest = session.acceptToolCallJson(
-                "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", appView)));
-        check(toolNames(applyRequest).contains("apply_deal_ui_changes"),
-                "view inspection must unlock the checked UI transaction");
-        check(applyRequest.contains("addView"),
-                "view inspection must expose sibling insertion without a document query");
-        String result = session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
-                "operation", "addView",
-                "target", "D1",
-                "source", "export view Detail(state: app.AppState): View { ui.Text(value: state.title) }"), true));
-        CanonicalJson.Obj object = object(result);
-        check(booleanField(object, "accepted"), "a checked non-root view must be added");
-        check(stringField(object, "dealUi").contains("export view Detail"),
-                "the accepted canonical UI source must contain the added view");
-        check(stringField(object, "deal").equals(DEAL), "adding a UI view must not touch DEAL");
+        expectRejected(() -> session.acceptToolCallJson(
+                "query_deal_ui_view", CompilerProtocolJson.encode(Map.of("target", appView))));
+        expectRejected(() -> session.acceptToolCallJson("apply_deal_ui_changes", operationArguments(Map.of(
+                "operation", "addView", "target", "D1",
+                "source", "export view Detail(state: app.AppState): View { ui.Text(value: state.title) }"), true)));
+        check(session.nextRequestJson().equals(initial), "hidden view operations must not modify the session");
     }
 
     private static void unqueriedAliasCannotBeWritten() {
@@ -907,14 +737,14 @@ public final class CanonicalRefinementSessionTest {
         String updateBody = dealBodyAlias(initial, update);
         String initialState = dealSymbolAlias(initial, "initialState");
         String unrelatedBody = dealBodyAlias(initial, initialState);
-        session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
-                "target", updateBody)));
-        String rejected = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+        session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(updateBody), "requestedOperations", List.of("replaceFunctionBody"))));
+        String before = session.nextRequestJson();
+        expectRejected(() -> session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
                 "operation", "replaceFunctionBody",
                 "target", unrelatedBody,
-                "body", "return {title: \"Wrong\", count: 0};"), true));
-        check(rejected.contains("CP1010"), "compiler must reject a write to an unqueried alias");
-        check(rejected.contains(updateBody), "queried target must remain the only writable body");
+                "body", "return {title: \"Wrong\", count: 0};"), true)));
+        check(session.nextRequestJson().equals(before), "ungranted target must not change the surface or budgets");
     }
 
     private static void batchedQueriesConsumeOneProviderRound() {
@@ -924,24 +754,19 @@ public final class CanonicalRefinementSessionTest {
         var calls = nodes.stream().map(node -> Map.of(
                 "name", "query_deal_ui_node",
                 "arguments", Map.of("target", node))).toList();
-        String request = session.acceptToolCallsJson(CompilerProtocolJson.encode(calls));
-        CanonicalJson.Obj object = object(request);
-        check(CompilerProtocolJson.intField(object, "round") == 2,
-                "one batched provider turn must advance the round exactly once");
-        check(toolNames(request).contains("apply_deal_ui_changes"),
-                "batched UI context must expose the targeted write transaction");
+        expectRejected(() -> session.acceptToolCallsJson(CompilerProtocolJson.encode(calls)));
+        check(session.nextRequestJson().equals(initial), "ungranted query batch is rejected before any grant or budget changes");
     }
 
     private static void writePhaseHidesAllQueryTools() {
         var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Polish the interface", 2, 1);
         String initial = session.nextRequestJson();
         String target = uiNodeAliases(initial).get(0);
-        String request = session.acceptToolCallJson("query_deal_ui_node", CompilerProtocolJson.encode(Map.of(
-                "target", target)));
-        check(toolNames(request).contains("apply_deal_ui_changes"),
-                "a successful inspection must unlock the UI transaction");
-        check(toolNames(request).stream().noneMatch(name -> name.startsWith("query_")),
-                "the edit phase must hide every query tool so reads cannot be nested in a ChangeSet");
+        String request = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(target), "requestedOperations", List.of("replaceSubtree"))));
+        check(toolNames(request).contains("replace_deal_ui_subtree"), "inspection grants subtree replacement");
+        expectRejected(() -> session.acceptToolCallJson("query_deal_ui_node", CompilerProtocolJson.encode(Map.of("target", target))));
+        check(session.nextRequestJson().equals(request), "hidden query cannot broaden the surface");
     }
 
     private static void dealBodyInspectionCanAddSiblingDeclarations() {
@@ -950,9 +775,9 @@ public final class CanonicalRefinementSessionTest {
         String initial = session.nextRequestJson();
         String update = dealSymbolAlias(initial, "update");
         String body = dealBodyAlias(initial, update);
-        String request = session.acceptToolCallJson("query_deal_node", CompilerProtocolJson.encode(Map.of(
-                "target", body)));
-        check(request.contains("addDeclaration"),
+        String request = session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(body, "M1"), "requestedOperations", List.of("replaceFunctionBody", "addDeclaration"))));
+        check(request.contains("add_deal_action_handler"),
                 "body inspection must unlock a sibling declaration without exposing a second read phase");
         check(request.contains("replaceFunctionBody"),
                 "body inspection must retain the targeted body replacement");
@@ -962,8 +787,9 @@ public final class CanonicalRefinementSessionTest {
 
     private static void interfaceChangeRequestsMinimalUiInspection() {
         var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Add reset behavior", 3, 1);
+        session.nextRequestJson();
         String dealEdit = session.acceptToolCallJson(
-                "query_deal_module", CompilerProtocolJson.encode(Map.of("target", "M1")));
+                "inspect_deal_change", CompilerProtocolJson.encode(Map.of("anchors", List.of("M1"), "requestedOperations", List.of("addDeclaration"))));
         check(dealEdit.contains("constructors, methods"),
                 "a DEAL edit surface must publish the relevant language subset");
         check(toolNames(dealEdit).contains("add_deal_action_handler"),
@@ -985,6 +811,26 @@ public final class CanonicalRefinementSessionTest {
 
     private static String operationArguments(Map<String, Object> operation, boolean finalChange) {
         return operationArguments(List.of(operation), finalChange);
+    }
+
+    private static void expectRejected(Runnable call) {
+        try { call.run(); } catch (IllegalArgumentException expected) { return; }
+        throw new AssertionError("An ungranted or malformed call was accepted");
+    }
+
+    private static String counterFoundation(CanonicalRefinementSession session) {
+        return session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of(),
+                "appStateDeclaration", "export class AppState { title: string = \"\"; count: int = 0; }",
+                "initialStateBody", "return {title: \"Ready\", count: 0};")));
+    }
+
+    private static String appendRun(CanonicalRefinementSession session, String name, String body) {
+        return session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(), "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class " + name + "Action {}",
+                        "handlerDeclaration", "// @ui-update\nexport function on" + name + "(state: AppState, action: " + name + "Action): AppState { " + body + " }")),
+                "final", false)));
     }
 
     private static String operationArguments(List<Map<String, Object>> operations, boolean finalChange) {

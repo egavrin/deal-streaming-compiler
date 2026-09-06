@@ -102,7 +102,8 @@ test("real canonical compiler supports atomic DEAL and Deal UI modernization", a
   assert.equal(editSurface.source, "ui.Text(value: state.title)");
   assert.equal(editSurface.allowedOperation.operation, "replaceSubtree");
   assert.ok(editSurface.statePaths.includes("state.title"));
-  assert.ok(editSurface.compatibleActions.some((action) => action.name === "IncrementAction"));
+  assert.deepEqual(editSurface.compatibleActions, []);
+  assert.ok(editSurface.lexicalBindings.some((binding) => binding.name === "state"));
   assert.match(textSlice.source, /^ui\.Text/);
   const visual = await compiler.applyDealUiChange({
     deal: structural.source,
