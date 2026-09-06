@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v7";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v8";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -512,6 +512,10 @@ public final class CanonicalRefinementSession {
     private String input() {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("request", instruction);
+        if (stateEvolutionAvailable()) {
+            context.put("stateProducers", CanonicalCompiler.queryRootStateProducers(deal).stream()
+                    .map(this::compactDealSlice).toList());
+        }
         if (uiEditSurface != null) {
             context.put("uiEditSurface", compactUiEditSurface(uiEditSurface));
             if (!requestedUiContracts.isEmpty()) context.put("requestedContracts", requestedUiContracts);
@@ -726,6 +730,14 @@ public final class CanonicalRefinementSession {
     }
 
     private Map<String, Object> dealStateEvolutionTool() {
+        Map<String, Object> producerBodies = new LinkedHashMap<>();
+        for (SemanticSlice slice : CanonicalCompiler.queryRootStateProducers(deal)) {
+            var operation = slice.allowedOperations().stream()
+                    .filter(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY))
+                    .findFirst().orElseThrow();
+            producerBodies.put(alias(operation.targetId()), Map.of("type", "string", "description",
+                    "Complete body reviewed against the new state schema. Preserve all unrelated fields explicitly, including newly added fields. Return unchanged source only when no adjustment is needed."));
+        }
         return tool(
                 "evolve_deal_state",
                 "Atomically complete one root-state schema evolution with its initializer, directly dependent records and up to four cohesive action-handler pairs. A successful transaction finishes DEAL for this refinement and advances to affected Deal UI.",
@@ -740,6 +752,7 @@ public final class CanonicalRefinementSession {
                         "initialStateBody", Map.of(
                                 "type", "string", "maxLength", MAX_INITIAL_STATE_BODY_CHARS,
                                 "description", "Complete replacement statements for initialState. Return every field in the evolved AppState and preserve existing initialized behavior"),
+                        "stateProducerBodies", objectSchema(producerBodies),
                         "actionHandlers", Map.of(
                                 "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
                                 "type", "array", "items", actionHandlerSchema()),
@@ -1256,6 +1269,7 @@ public final class CanonicalRefinementSession {
         }
         boolean sourceChanged = !result.sourceDigest().equals(beforeDigest);
         if (!sourceChanged) {
+            if (finishAcceptedRevision(finalChange)) return;
             SemanticId owner = operations.get(0).targetId();
             List<RepairScope> scopes = operations.stream()
                     .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
@@ -1455,6 +1469,17 @@ public final class CanonicalRefinementSession {
                 "operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
                 "target", nodeAliases("initialState").get(0),
                 "body", string(arguments, "initialStateBody")));
+        CanonicalJson.Obj producers = CompilerProtocolJson.requireObject(
+                field(arguments, "stateProducerBodies"), "stateProducerBodies");
+        for (SemanticSlice slice : CanonicalCompiler.queryRootStateProducers(deal)) {
+            grant(dealGrants, slice.allowedOperations());
+            var operation = slice.allowedOperations().stream()
+                    .filter(value -> value.operation().equals(DealCompilerWorkspace.REPLACE_FUNCTION_BODY))
+                    .findFirst().orElseThrow();
+            String target = alias(operation.targetId());
+            operations.add(Map.of("operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                    "target", target, "body", string(producers, target)));
+        }
         operations.add(Map.of(
                 "operation", DealCompilerWorkspace.SET_CAPABILITIES,
                 "target", module,
@@ -1638,6 +1663,7 @@ public final class CanonicalRefinementSession {
             return;
         }
         if (result.sourceDigest().equals(beforeDigest)) {
+            if (finishAcceptedRevision(finalChange)) return;
             SemanticId owner = operations.get(0).targetId();
             List<RepairScope> scopes = operations.stream()
                     .map(operation -> new RepairScope(operationName(operation), operation.targetId()))
@@ -1667,6 +1693,19 @@ public final class CanonicalRefinementSession {
         resetSurface();
         addTranscript("apply_deal_ui_changes", Map.of("accepted", true, "impact", result.impact()));
         if (inspection.valid() && finalChange) status = Status.COMPLETE;
+    }
+
+    private boolean finishAcceptedRevision(boolean finalChange) {
+        if (generation || !finalChange || (!repairScopes.isEmpty())
+                || (deal.equals(previousDeal) && dealUi.equals(previousDealUi))) return false;
+        var checked = CanonicalCompiler.compileCanonicalApp(deal, dealUi, pack, packSpecifier);
+        if (!checked.valid()) return false;
+        inspection = checked;
+        forcedArtifact = "";
+        resetSurface();
+        addTranscript("finish_accepted_revision", Map.of("accepted", true, "sourceChanged", false));
+        status = Status.COMPLETE;
+        return true;
     }
 
     private void beginRepairWorkspace(

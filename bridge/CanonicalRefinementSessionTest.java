@@ -67,6 +67,7 @@ public final class CanonicalRefinementSessionTest {
         acceptedChangeSetResetsTheLocalRepairBudget();
         greenfieldNoOpBecomesScopedRepair();
         refinementNoOpWritesBecomeScopedRepair();
+        acceptedRevisionCanBeConfirmedWithoutRewriting();
         stricterCheckedContractBecomesRepairInsteadOfShadowCrash();
         duplicateGreenfieldDeclarationsCanOnlyFinishDeal();
         numericStringRepairExplainsTypedUiFormatting();
@@ -328,10 +329,14 @@ public final class CanonicalRefinementSessionTest {
                 "a root-state schema cone must expose one cohesive state-evolution tool");
         check(!toolNames(write).contains("apply_deal_changes"),
                 "the state-evolution cone must hide the broad transaction that permits half-applied schemas");
+        check(write.contains("stateProducers") && write.contains("state.count + 1"),
+                "schema evolution must show existing state producer bodies, not only the initializer");
         String next = session.acceptToolCallJson("evolve_deal_state", CompilerProtocolJson.encode(Map.of(
                 "supportingDeclarations", List.of(),
                 "appStateDeclaration", "export class AppState { title: string = \"Ready\"; count: int = 0; paused: boolean = false; }",
                 "initialStateBody", "return {title: \"Ready\", count: 0, paused: false};",
+                "stateProducerBodies", Map.of(dealBodyAlias(initial, dealSymbolAlias(initial, "update")),
+                        "return {title: state.title, count: state.count + 1, paused: state.paused};"),
                 "capabilities", List.of("clock.frame"),
                 "actionHandlers", List.of(Map.of(
                         "actionDeclaration", "export class TogglePauseAction {}",
@@ -465,6 +470,24 @@ public final class CanonicalRefinementSessionTest {
         session.nextRequestJson(); String next = counterFoundation(session);
         expectRejected(() -> counterFoundation(session));
         check(session.nextRequestJson().equals(next), "foundation replay cannot consume semantic repair");
+    }
+
+    private static void acceptedRevisionCanBeConfirmedWithoutRewriting() {
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack", "Increase by two", 8, 2);
+        String request = session.nextRequestJson();
+        String body = "return {title: state.title, count: state.count + 2};";
+        for (boolean finish : List.of(false, true)) {
+            String target = dealBodyAlias(request, dealSymbolAlias(request, "update"));
+            session.acceptToolCallJson("inspect_deal_change", CompilerProtocolJson.encode(Map.of(
+                    "anchors", List.of(target), "requestedOperations", List.of("replaceFunctionBody"))));
+            request = session.acceptToolCallJson("apply_deal_changes", operationArguments(Map.of(
+                    "operation", "replaceFunctionBody", "body", body), finish));
+        }
+        check(booleanField(object(request), "accepted"), "final confirmation must keep the accepted revision: " + request);
+        try {
+            session.acceptToolCallJson("unchanged", "{}");
+            throw new AssertionError("completed session accepted another call");
+        } catch (IllegalStateException expected) { }
     }
 
     private static void refinementNoOpWritesBecomeScopedRepair() {
