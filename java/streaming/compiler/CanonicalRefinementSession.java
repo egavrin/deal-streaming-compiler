@@ -51,6 +51,8 @@ public final class CanonicalRefinementSession {
             query_ui_contracts may first request missing component and action contracts without changing
             the writable scope. Use lexicalBindings and bindingTypes for enclosing ForEach items.
             Emit exactly one tool call per response; batch dependent edits inside that tool.
+            For Deal UI select exactly one node. To change several related descendants, select
+            their smallest common ancestor and replace that subtree, preserving unrelated children.
             replaceFunctionBody and replaceBlockBody accept only statements inside the existing
             braces. Never include a function signature, declaration, or the outer braces in body.
             Inspecting a DEAL symbol or body also unlocks adding a new sibling declaration when the
@@ -877,7 +879,7 @@ public final class CanonicalRefinementSession {
         }
         return objectSchema(Map.of(
                 "anchors", Map.of(
-                        "type", "array", "minItems", 1, "uniqueItems", true,
+                        "type", "array", "minItems", 1, "maxItems", artifact.equals("deal") ? targets.size() : 1, "uniqueItems", true,
                         "items", enumSchema(targets)),
                 "requestedOperations", Map.of(
                         "type", "array", "minItems", 1, "uniqueItems", true,
