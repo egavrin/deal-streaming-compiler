@@ -30,7 +30,7 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v6";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v7";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -131,7 +131,14 @@ public final class CanonicalRefinementSession {
             with items[items.length] = value; build nested arrays by appending each completed row the
             same way. State and action parameters are borrowed: construct a new
             state and mutate only fresh local arrays or records. Keep visible strings English.
-            Use int for integral values and defaults; a number default requires 0.0. Construct
+            Use int for integral values and defaults; a number default requires 0.0.
+            Arithmetic operands must have the same numeric type: int * number and number + int
+            are invalid. Multiplying an int by 1.0 is NOT a conversion. Keep integral counters,
+            indices, elapsed milliseconds and values consumed by int UI properties as int.
+            For number computations use number operands throughout; do not assume JavaScript
+            coercion or invent conversion functions. consumerContract lists downstream property types.
+            During repair, change the expressions causing each diagnostic, not unrelated setup.
+            Construct
             records with context-typed object literals such as {count: 0}; DEAL has no new operator.
             Presentation-ready labels, glyphs, tones, counters and chart arrays belong in AppState.
             Keep dynamic numeric values as int or number fields. DEAL has no number-to-string
@@ -170,6 +177,11 @@ public final class CanonicalRefinementSession {
             The exact syntax is ui.Component(property: expression, spacing: ui.spaceMd) { ... }.
             Properties use colon, never equals. Qualify every component and token with ui. Bind an
             action as onClick: action app.SomeAction { field: expression }, never SomeAction().
+            Event arguments come from the event bindingRoot (payload). For a scalar payload use
+            payload directly; for a record use only the fields declared in events.payloadTypes.
+            An action field name does not rename a payload field. Bind that field to the matching
+            typed payload path. PointerSurface must wrap the content that receives its gestures;
+            it is not a separate empty control below the visual surface.
             Runtime state values always start with the root parameter state, for example
             state.score. The app alias qualifies action types only; never read app.someField.
             """.strip();
@@ -509,10 +521,23 @@ public final class CanonicalRefinementSession {
         }
         context.put("packVersion", inspection.packVersion());
         context.put("packDigest", inspection.packDigest());
+        if (generation && forcedArtifact.equals("deal")) {
+            context.put("consumerContract", inspection.componentPack().components().stream()
+                    .filter(component -> component.properties().stream().anyMatch(property ->
+                            property.type().equals("int") || property.type().equals("number"))
+                            || !component.events().isEmpty())
+                    .map(component -> Map.of("component", component.name(), "numericProperties",
+                            component.properties().stream().filter(property -> property.type().equals("int")
+                                    || property.type().equals("number")).toList(), "events", component.events())).toList());
+        }
         if (generation && forcedArtifact.equals("dealui")) {
             context.put("componentPack", compactComponentPack());
         }
-        if (uiEditSurface == null) context.put("previousToolResults", agentTranscript());
+        if (uiEditSurface == null && repairWorkspace == null) context.put("previousToolResults", agentTranscript());
+        if (repairWorkspace != null && !transcript.isEmpty()
+                && transcript.getLast().get("tool").equals("compiler_no_progress")) {
+            context.put("previousToolResults", List.of(transcript.getLast()));
+        }
         if (repairWorkspace != null) {
             RepairSlot active = repairWorkspace.slots().stream()
                     .filter(value -> value.status() == RepairSlotStatus.REJECTED)
