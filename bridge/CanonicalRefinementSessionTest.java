@@ -474,6 +474,24 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        var groupedEnvelope = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("bad", "return", Map.of("value", "missing")),
+                cc("body", "block", Map.of("statements", List.of("bad"))),
+                cc("unrelated", "integer", Map.of("value", 9))), "arguments", Map.of("body", "body"))));
+        var grouped = new deal.compiler.ConstructionRepairWorkspace(groupedEnvelope,
+                new deal.compiler.DealConstruction.Failure("bad", "missing operand"));
+        check(CompilerProtocolJson.encode(grouped.snapshot().get("editable")).contains("body"),
+                "repair must expose enclosing consumers needed for local introduction");
+        var groupedPatch = List.of(
+                cc("bad", "return", Map.of("value", Map.of("path", List.of("n")))),
+                cc("local", "local", Map.of("name", "n", "type", "int", "value", 1)),
+                cc("body", "block", Map.of("statements", List.of("local", "bad"))));
+        grouped.patch(CompilerProtocolJson.requireArray(CompilerProtocolJson.field(
+                object(CompilerProtocolJson.encode(Map.of("calls", groupedPatch))), "calls"), "calls"));
+        check(new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", CompilerProtocolJson.field(grouped.envelope(), "calls"), "result", "body"))),
+                deal.compiler.DealConstruction.Kind.BLOCK).contains("let n: int = 1;\nreturn n;"),
+                "consumer-group repair must permit a local declaration before its use");
         String inlineAction = new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("button", "component", Map.of("name", "Button", "children", List.of(), "fields", List.of(
                         Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Increment", "fields", List.of()))))))),

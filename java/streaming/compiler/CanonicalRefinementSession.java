@@ -379,7 +379,7 @@ public final class CanonicalRefinementSession {
 
     private String instructions() {
         if (constructionRepair != null) return (constructionRepairUi ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
-                + "\nRepair only constructorRepair.target. Send its complete replacement call plus any NEW dependency calls (maximum eight calls total). Existing sibling calls and transaction arguments are preserved by the compiler. Never regenerate the application. A VALUE is not a DECLARATION; use declareRecord for a type, record for a value. Text properties need text-constructor handles.";
+                + "\nRepair constructorRepair.target and only the necessary consumers listed in constructorRepair.editable. Send complete replacement calls plus NEW dependencies (maximum sixteen calls). You may insert a new local into the editable enclosing block when fixing an invalid value/statement use. Independent calls and transaction arguments are immutable. Never regenerate the application. A VALUE is not a DECLARATION; use declareRecord for a type, record for a value. Text properties accept inline {\"text\":\"...\"}.";
         if (constructionApi) {
             if (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
                 return ConstructionSurface.UI_INSTRUCTIONS;
@@ -712,8 +712,8 @@ public final class CanonicalRefinementSession {
             var contract = CanonicalConstruction.contract(constructionRepairUi);
             var calls = new LinkedHashMap<String, Object>((Map<String, Object>) ((Map<?, ?>) contract.get("properties")).get("calls"));
             calls.put("minItems", 1);
-            calls.put("maxItems", 8);
-            return List.of(tool("construct_repair_call", "Replace only the rejected constructor call and optionally add new dependency calls. All existing siblings and transaction arguments stay unchanged.", objectSchema(Map.of("calls", calls))));
+            calls.put("maxItems", 16);
+            return List.of(tool("construct_repair_call", "Repair the rejected call and necessary editable consumers; optionally add dependencies. Independent calls and transaction arguments stay unchanged.", objectSchema(Map.of("calls", calls))));
         }
         if (repairWorkspace != null) {
             List<Map<String, Object>> repairTools = new ArrayList<>();
