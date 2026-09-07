@@ -44,6 +44,7 @@ public final class CanonicalRefinementSessionTest {
     private CanonicalRefinementSessionTest() {}
 
     public static void main(String[] args) {
+        sourceFreeConstructionCompilesAndRepairs();
         greenfieldHostReadinessGatesUi();
         diagnosticCompactionPreservesLocationsAndEvidence();
         inspectChangeUnlocksCompilerOwnedCone();
@@ -461,6 +462,71 @@ public final class CanonicalRefinementSessionTest {
                         "handlerDeclaration", "// @ui-update\nexport function tick(state: AppState, action: TickAction): AppState { return {count: state.count + action.elapsed}; }")),
                 "final", false)));
         check(toolNames(ready).contains("finish_deal"), "adding compatible handler must unblock completion");
+    }
+
+    private static Map<String, Object> cc(String id, String op, Map<String, Object> args) {
+        var result = new java.util.LinkedHashMap<String, Object>(args);
+        result.put("id", id); result.put("op", op); return result;
+    }
+
+    private static String construction(List<Map<String, Object>> calls, Map<String, Object> args) {
+        return CompilerProtocolJson.encode(Map.of("calls", calls, "arguments", args));
+    }
+
+    private static void sourceFreeConstructionCompilesAndRepairs() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
+        String request = session.nextRequestJson();
+        check(toolNames(request).equals(List.of("construct_apply_deal_foundation")), "no source-writing bootstrap tool may remain");
+        expectRejected(() -> session.acceptToolCallJson("apply_deal_foundation", "{}"));
+        var foundation = List.of(
+                cc("zero", "integer", Map.of("value", 0)),
+                cc("title", "text", Map.of("value", "Counter")),
+                cc("stateType", "declareRecord", Map.of("name", "AppState", "fields", List.of(
+                        Map.of("name", "count", "type", "int", "value", "zero"), Map.of("name", "title", "type", "string", "value", "title")))),
+                cc("state", "record", Map.of("fields", List.of(Map.of("name", "count", "value", "zero"), Map.of("name", "title", "value", "title")))),
+                cc("ret", "return", Map.of("value", "state")), cc("init", "block", Map.of("statements", List.of("ret"))));
+        expectRejected(() -> session.acceptToolCallJson("construct_apply_deal_foundation", construction(foundation, Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "export class AppState {}", "initialStateBody", "init"))));
+        String next = session.acceptToolCallJson("construct_apply_deal_foundation", construction(foundation, Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "stateType", "initialStateBody", "init")));
+        check(toolNames(next).contains("construct_append_deal_behavior"), "behavior must also be source-free");
+        var behavior = List.of(
+                cc("actionType", "declareRecord", Map.of("name", "IncrementAction", "fields", List.of())),
+                cc("state", "reference", Map.of("name", "state")),
+                cc("count", "field", Map.of("object", "state", "name", "count")),
+                cc("title", "field", Map.of("object", "state", "name", "title")),
+                cc("one", "integer", Map.of("value", 1)),
+                cc("sum", "binary", Map.of("operator", "+", "left", "count", "right", "one")),
+                cc("updated", "record", Map.of("fields", List.of(Map.of("name", "count", "value", "sum"), Map.of("name", "title", "value", "title")))),
+                cc("ret", "return", Map.of("value", "updated")), cc("body", "block", Map.of("statements", List.of("ret"))),
+                cc("handler", "declareUpdate", Map.of("name", "increment", "parameters", List.of(
+                        Map.of("name", "state", "type", "AppState"), Map.of("name", "action", "type", "IncrementAction")), "returns", "AppState", "body", "body")));
+        session.acceptToolCallJson("construct_append_deal_behavior", construction(behavior, Map.of(
+                "supportingDeclarations", List.of(), "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", false)));
+        String ui = session.acceptToolCallJson("finish_deal", CompilerProtocolJson.encode(Map.of("coveredActions", List.of("IncrementAction"), "reason", "Increment is implemented")));
+        check(toolNames(ui).contains("construct_apply_deal_ui_changes"), "UI must have no source fallback");
+        var nodes = new java.util.ArrayList<Map<String, Object>>(List.of(
+                cc("label", "integer", Map.of("value", 7)),
+                cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
+                cc("action", "action", Map.of("name", "IncrementAction", "fields", List.of())),
+                cc("buttonText", "text", Map.of("value", "Add")),
+                cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", "buttonText"), Map.of("name", "onClick", "value", "action")), "children", List.of())),
+                cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("text", "button"))),
+                cc("body", "uiBody", Map.of("children", List.of("column")))));
+        String rejected = session.acceptToolCallJson("construct_apply_deal_ui_changes", construction(nodes, Map.of(
+                "operations", List.of(Map.of("operation", "replaceViewBody", "body", "body")), "final", true)));
+        check(rejected.contains("UI2031") && toolNames(rejected).contains("construct_patch_repair_slot"),
+                "typed construction must still run semantic validation and expose source-free repair: " + rejected);
+        nodes.set(0, cc("label", "text", Map.of("value", "Counter")));
+        String complete = session.acceptToolCallJson("construct_patch_repair_slot", construction(nodes, Map.of(
+                "slot", "R1", "payload", Map.of("body", "body"))));
+        check(booleanField(object(complete), "accepted"), "correct construction must commit a canonical pair: " + complete);
+        check(stringField(object(complete), "deal").contains("state.count + 1"), "compiler must emit the expression");
+        var constructor = new deal.ui.CanonicalConstruction(false);
+        expectRejected(() -> constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("bad", "reference", Map.of("name", "state; return 5;"))), "result", "bad"))), deal.compiler.DealConstruction.Kind.VALUE));
+        expectRejected(() -> constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("x", "integer", Map.of("value", 1)), cc("x", "integer", Map.of("value", 2))), "result", "x"))), deal.compiler.DealConstruction.Kind.VALUE));
     }
 
     private static void greenfieldFinalFalseKeepsBuildingDeal() {

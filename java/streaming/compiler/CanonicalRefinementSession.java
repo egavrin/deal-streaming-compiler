@@ -30,6 +30,15 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
+    private boolean constructionApi;
+    private final Set<String> uiConstructionTools = new LinkedHashSet<>();
+
+    /** Production agents use source-free construction. Text-edit API remains an internal compatibility adapter. */
+    public CanonicalRefinementSession useConstructionApi() {
+        if (rounds != 0) throw new IllegalStateException("Select construction API before issuing requests");
+        constructionApi = true;
+        return this;
+    }
     private static final String AGENT_SURFACE_VERSION = "agent-surface-v10";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
@@ -309,6 +318,17 @@ public final class CanonicalRefinementSession {
         }
         String input = input();
         List<Map<String, Object>> tools = tools();
+        if (constructionApi) {
+            uiConstructionTools.clear();
+            tools = tools.stream().map(tool -> {
+                String name = (String) tool.get("name");
+                boolean ui = repairWorkspace != null ? repairArtifact.equals("dealui")
+                        : forcedArtifact.equals("dealui") || name.contains("_ui_");
+                var adapted = ConstructionSurface.tool(tool, ui);
+                if (ui) uiConstructionTools.add((String) adapted.get("name"));
+                return adapted;
+            }).toList();
+        }
         issuedTools = List.copyOf(tools);
         String encodedTools = CompilerProtocolJson.encode(tools);
         String surfaceDigest = DealCompilerWorkspace.digest(input + "\u0000" + encodedTools);
@@ -316,6 +336,7 @@ public final class CanonicalRefinementSession {
         request.put("status", "request");
         request.put("protocolVersion", CompilerProtocol.VERSION);
         request.put("surfaceVersion", AGENT_SURFACE_VERSION);
+        request.put("constructionProtocol", constructionApi ? "compiler-construction-v1" : "source-edit-compatibility");
         request.put("protocolMode", "v2-with-v1-shadow");
         request.put("surfaceDigest", surfaceDigest);
         int inputBytes = input.getBytes(StandardCharsets.UTF_8).length;
@@ -336,6 +357,7 @@ public final class CanonicalRefinementSession {
     }
 
     private String instructions() {
+        if (constructionApi) return ConstructionSurface.INSTRUCTIONS;
         if (generation) {
             return forcedArtifact.equals("dealui")
                     ? DEAL_UI_GENERATION_SYSTEM_PROMPT
@@ -402,6 +424,9 @@ public final class CanonicalRefinementSession {
         Map<String, Object> tool = issuedTools.stream().filter(value -> name.equals(value.get("name")))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Tool is not granted by the current surface: " + name));
         validateSchema(arguments, (Map<?, ?>) tool.get("parameters"));
+        if (constructionApi && name.startsWith("construct_"))
+            ConstructionSurface.lower(arguments, uiConstructionTools.contains(name),
+                    repairWorkspace == null ? "" : activeRejectedRepairSlot().operation());
     }
 
     private static void validateSchema(CanonicalJson.Value value, Map<?, ?> schema) {
@@ -453,6 +478,11 @@ public final class CanonicalRefinementSession {
     }
 
     private void acceptToolCall(String name, CanonicalJson.Obj arguments) {
+        if (constructionApi && name.startsWith("construct_")) {
+            arguments = ConstructionSurface.lower(arguments, uiConstructionTools.contains(name),
+                    repairWorkspace == null ? "" : activeRejectedRepairSlot().operation());
+            name = name.substring("construct_".length());
+        }
         switch (name) {
             case "query_deal_module" -> queryDealModule(string(arguments, "target"));
             case "query_deal_symbol" -> queryDealSymbol(string(arguments, "target"));

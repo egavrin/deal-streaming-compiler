@@ -37,6 +37,7 @@ export class CanonicalCompilerClient {
       ...(await sourceFiles(join(this.dealRepo, "deal"), [join(this.dealRepo, "deal", "test")])),
       ...(await sourceFiles(join(this.dealUiRepo, "src", "main", "java"))),
       join(ROOT, "java", "streaming", "compiler", "CanonicalRefinementSession.java"),
+      join(ROOT, "java", "streaming", "compiler", "ConstructionSurface.java"),
       join(ROOT, "bridge", "CanonicalRefinementSessionTest.java"),
       bridge,
     ];
