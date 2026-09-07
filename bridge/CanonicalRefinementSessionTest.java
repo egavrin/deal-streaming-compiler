@@ -6,6 +6,8 @@ import deal.ui.CanonicalCompiler;
 
 import java.util.List;
 import java.util.Map;
+import static deal.compiler.CompilerProtocolJson.field;
+import static deal.compiler.CompilerProtocolJson.requireArray;
 
 /** Executable regression test for the portable LLM-facing refinement state machine. */
 public final class CanonicalRefinementSessionTest {
@@ -474,6 +476,27 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        var scalarChildEnvelope = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("label", "text", Map.of("value", "Title")),
+                cc("content", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("label")))),
+                "arguments", Map.of("body", "content"))));
+        try {
+            new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
+                    "calls", field(scalarChildEnvelope, "calls"), "result", "content"))), deal.compiler.DealConstruction.Kind.UI);
+            throw new AssertionError("scalar child must be rejected");
+        } catch (deal.compiler.DealConstruction.Failure failure) {
+            check(failure.ownerId.equals("content") && failure.getMessage().contains("NEW component constructor"),
+                    "wrong-kind diagnostic must explain the required UI wrapper and target the consuming node");
+            var workspace = new deal.compiler.ConstructionRepairWorkspace(scalarChildEnvelope, failure);
+            var patchCalls = List.of(
+                    cc("labelNode", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
+                    cc("content", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("labelNode"))));
+            var patch = object(CompilerProtocolJson.encode(Map.of("calls", patchCalls)));
+            workspace.patch(requireArray(field(patch, "calls"), "calls"));
+            String fixed = new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
+                    "calls", field(workspace.envelope(), "calls"), "result", "content"))), deal.compiler.DealConstruction.Kind.UI);
+            check(fixed.contains("ui.Text(value: \"Title\")"), "repair attaches a new node without rewriting the original scalar");
+        }
         var groupedEnvelope = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
                 cc("bad", "return", Map.of("value", "missing")),
                 cc("body", "block", Map.of("statements", List.of("bad"))),

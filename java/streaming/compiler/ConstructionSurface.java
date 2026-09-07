@@ -17,7 +17,7 @@ final class ConstructionSurface {
             Do not create state, initializers, records, functions or handlers. Bind existing actions from deal.interface.
             You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
             Prefer path(parts=["state","field"]) for state/member access. VALUE operands allow inline integers
-            and booleans; strings remain handles. Use text calls for display strings. No indexing is permitted.
+            and booleans; strings remain handles. Use inline text operands for display strings. No indexing is permitted.
             Prefer inline VALUE operands to avoid redundant handles: {"text":"Ready"} is literal text,
             {"path":["state","count"]} is a state field, {"path":["payload"]} is event data.
             Use these objects directly as fields[].value. Never use bare state for a numeric property.
@@ -27,7 +27,9 @@ final class ConstructionSurface {
             Tool arguments have two fields: calls (a flat compiler constructor batch) and arguments (the granted edit).
             Every call has an id and op. Operand strings name ids in this batch, never source expressions.
             Order is irrelevant. Do not reuse inspected symbol/node ids as construction operands.
-            For text data use text; for numbers use integer; for booleans use boolean.
+            Prefer inline text/integer/boolean operands instead of separate scalar calls.
+            The text constructor creates a VALUE, never a visible Text node. A component named Text creates a UI node.
+            Every children entry must point to a component, when or forEach, never a scalar value or text constructor.
             reference(name=state) plus field(object=<state id>,name=<field>) binds state data.
             reference(name=ui) plus field binds an exact UI constant from the pack if its property needs one.
             Token properties such as spacing require {"path":["ui","spaceMd"]}, NOT {"text":"spaceMd"}.
@@ -53,9 +55,16 @@ final class ConstructionSurface {
             AppTheme must contain one Root component, the adaptive application surface. Place content inside Root.
             Put layout containers inside AppTheme.children, not beside AppTheme in uiBody.children.
             Retain this root theme wrapper when repairing a whole root body.
+            Creating a call does not attach it: every visible component, action binding and clock must be reachable
+            through children from the operation's body handle. Bind EVERY action from deal.interface at least once.
+            For parameterized actions use the compatible input event and its payload, not a hard-coded value.
+            For required host capabilities attach their host component INSIDE the Root/Column children tree,
+            never as an additional view root. A FrameClock call left unused in calls does not implement a clock.
             Use compact defaults: omit optional properties unless needed. Never fill unrelated properties with a label.
             Respect component types, available state paths and nominal actions. Compiler diagnostics are authoritative.
             During repair, change only the rejected slot; preservedSlots.payload is staged read-only context.
+            Read activeSlot.diagnostics first. Fix every listed expected/actual mismatch in the returned reachable tree.
+            Do not merely append a disconnected constructor, and do not resubmit the same rejected body.
             No source-code escape hatch is available. Submit compiler construction calls only.
             """;
     private static final Set<String> CODE_FIELDS = Set.of("appStateDeclaration", "initialStateBody", "actionDeclaration",
