@@ -500,6 +500,15 @@ public final class CanonicalRefinementSessionTest {
         } catch (deal.compiler.DealConstruction.Failure failure) {
             check(failure.ownerId.equals("f"), "repair must target the consumer, not corrupt a shared value");
         }
+        try {
+            new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                    "calls", List.of(cc("l", "local", Map.of("name", "amount", "type", "int", "value", 0)),
+                            cc("r", "return", Map.of("value", "l"))), "result", "r"))), deal.compiler.DealConstruction.Kind.STATEMENT);
+            throw new AssertionError("a local declaration is not a value");
+        } catch (deal.compiler.DealConstruction.Failure failure) {
+            check(failure.ownerId.equals("r") && failure.getMessage().contains("{\"path\":[\"amount\"]}")
+                    && failure.getMessage().contains("before use"), "local diagnostics must expose the actual reference operand and scope requirement");
+        }
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         String request = session.nextRequestJson();
         check(toolNames(request).equals(List.of("construct_apply_deal_batch")), "one source-free batch must replace bootstrap rounds");
@@ -551,6 +560,7 @@ public final class CanonicalRefinementSessionTest {
                 "calls", List.of(behavior.get(0), cc("stateType", "declareRecord", Map.of("name", "AppState", "fields", List.of())))))));
         check(constructorRepair.equals(constructorSession.nextRequestJson()), "unauthorized sibling edits must not change repair state");
         check(!stringField(object(constructorRepair), "input").contains("consumerContract"), "constructor repair must not replay unrelated pack contracts");
+        check(stringField(object(stringField(object(constructorRepair), "input")), "requiredArtifact").equals("deal"), "narrow repair must preserve artifact/model routing");
         String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0), foundation.get(2)))));
         check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired declaration must resume the original batch");
         check(CompilerProtocolJson.encode(CompilerProtocolJson.field(object(constructorFixed), "revision")).equals(

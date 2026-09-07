@@ -613,6 +613,7 @@ public final class CanonicalRefinementSession {
         context.put("request", instruction);
         if (constructionRepair != null) {
             context.put("constructorRepair", constructionRepair.snapshot());
+            context.put("requiredArtifact", constructionRepairUi ? "dealui" : "deal");
             return CompilerProtocolJson.encode(context);
         }
         if (stateEvolutionAvailable()) {

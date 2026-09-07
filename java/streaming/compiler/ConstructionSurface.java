@@ -80,11 +80,13 @@ final class ConstructionSurface {
             returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
             Use a returnRecord id directly as initialStateBody or a handler body. block concatenates statement or block handles in order.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
-            one program variable; field selects a member. record assembles fields from value handles. binary computes
+            one program variable; field selects a member. record assembles fields from value handles. binary computes a value.
             if is a STATEMENT, not a conditional value: then and else must be BLOCK handles.
             For a conditional computed value, declare a fresh local, assign it inside if branches,
-            then use its reference in the returning record. Blocks contain statement or block handles, never VALUE handles.
-            a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
+            and include the local declaration in the enclosing block before those branches. A local id is a STATEMENT,
+            never a value or assignment target: use {"path":["variableName"]} to read/write that variable.
+            Use that reference in the returning record. Blocks contain statement or block handles, never VALUE handles.
+            local/assign/return/if/while build statements; block groups statement handles. declareRecord and
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
             Scalar type names are int, number, boolean, string, bytes and void (return type only).
             Other type names must name declared nominal classes; use boolean, not bool.
