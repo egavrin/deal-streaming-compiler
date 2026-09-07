@@ -31,6 +31,17 @@ import java.nio.charset.StandardCharsets;
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
     private boolean constructionApi;
+    private String dealReasoningEffort = "low";
+    private String uiReasoningEffort = "none";
+
+    public CanonicalRefinementSession withReasoningEffort(String dealEffort, String uiEffort) {
+        if (rounds != 0) throw new IllegalStateException("Configure reasoning before model requests");
+        if (!List.of("none", "low").contains(dealEffort) || !List.of("none", "low").contains(uiEffort))
+            throw new IllegalArgumentException("Supported reasoning profiles: none, low");
+        dealReasoningEffort = dealEffort;
+        uiReasoningEffort = uiEffort;
+        return this;
+    }
     private final Set<String> uiConstructionTools = new LinkedHashSet<>();
 
     /** Production agents use source-free construction. Text-edit API remains an internal compatibility adapter. */
@@ -39,7 +50,7 @@ public final class CanonicalRefinementSession {
         constructionApi = true;
         return this;
     }
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v11";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v12";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -351,6 +362,7 @@ public final class CanonicalRefinementSession {
                 "deal", inspection.deal().sourceDigest(),
                 "dealUi", inspection.dealUi() == null ? "" : inspection.dealUi().sourceDigest()));
         request.put("instructions", instructions());
+        request.put("reasoningEffort", forcedArtifact.equals("dealui") ? uiReasoningEffort : dealReasoningEffort);
         request.put("input", input);
         request.put("tools", tools);
         request.put("round", rounds + 1);
@@ -567,8 +579,9 @@ public final class CanonicalRefinementSession {
             context.put("uiEditSurface", compactUiEditSurface(uiEditSurface));
             if (!requestedUiContracts.isEmpty()) context.put("requestedContracts", requestedUiContracts);
         } else {
-            context.put("deal", compactDealIndex());
-            if (inspection.dealUi() != null) {
+            context.put("deal", constructionApi && generation && forcedArtifact.equals("dealui")
+                    ? Map.of("interface", compactInterface()) : compactDealIndex());
+            if (inspection.dealUi() != null && !(constructionApi && generation && forcedArtifact.equals("deal"))) {
                 context.put("dealUi", compactDealUiIndex());
             }
         }
@@ -2492,7 +2505,9 @@ public final class CanonicalRefinementSession {
         if (snapshot == null) return Map.of();
         return Map.of(
                 "version", snapshot.version(),
-                "components", snapshot.components().stream().map(component -> Map.of(
+                "components", snapshot.components().stream().map(component -> constructionApi
+                        ? constructionComponentContract(component)
+                        : Map.<String, Object>of(
                         "name", component.name(),
                         "props", component.properties().stream().map(property -> Map.of(
                                 "name", property.name(),
@@ -2503,6 +2518,20 @@ public final class CanonicalRefinementSession {
                         "events", component.events(),
                         "capabilities", component.capabilities())).toList(),
                 "tokens", snapshot.tokens());
+    }
+
+    private Map<String, Object> constructionComponentContract(CanonicalCompiler.ComponentSnapshot component) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("name", component.name());
+        Map<String, String> props = new LinkedHashMap<>();
+        component.properties().forEach(property -> props.put(
+                property.name() + (property.optional() ? "?" : ""), property.type()));
+        result.put("props", props);
+        result.put("children", component.children());
+        if (!component.parent().equals("any")) result.put("parent", component.parent());
+        if (!component.events().isEmpty()) result.put("events", component.events());
+        if (!component.capabilities().isEmpty()) result.put("capabilities", component.capabilities());
+        return result;
     }
 
     private Map<String, Object> compactUiEditSurface(UiCompilerWorkspace.UiEditSurface surface) {

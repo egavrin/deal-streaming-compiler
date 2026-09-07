@@ -477,6 +477,10 @@ public final class CanonicalRefinementSessionTest {
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         String request = session.nextRequestJson();
         check(toolNames(request).equals(List.of("construct_apply_deal_batch")), "one source-free batch must replace bootstrap rounds");
+        check(stringField(object(request), "reasoningEffort").equals("low"), "baseline reasoning must stay explicit");
+        var fastSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2)
+                .useConstructionApi().withReasoningEffort("none", "none");
+        check(stringField(object(fastSession.nextRequestJson()), "reasoningEffort").equals("none"), "reasoning ablation must be configurable");
         expectRejected(() -> session.acceptToolCallJson("apply_deal_foundation", "{}"));
         var foundation = List.of(
                 cc("zero", "integer", Map.of("value", 0)),
@@ -508,6 +512,21 @@ public final class CanonicalRefinementSessionTest {
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
         check(!toolNames(ui).contains("finish_deal"), "final batch must transition without a completion round");
         check(toolNames(ui).contains("construct_apply_deal_ui_changes"), "UI must have no source fallback");
+        check(stringField(object(ui), "reasoningEffort").equals("none"), "UI reasoning must remain independent");
+        var uiInput = object(stringField(object(ui), "input"));
+        var packContract = CompilerProtocolJson.requireObject(CompilerProtocolJson.field(uiInput, "componentPack"), "componentPack");
+        var components = CompilerProtocolJson.requireArray(CompilerProtocolJson.field(packContract, "components"), "components").items();
+        var expectedComponents = CanonicalCompiler.inspectCanonicalApp(DEAL, UI, PACK, "./ui.pack").componentPack().components();
+        check(components.size() == expectedComponents.size(), "compact surface must retain every component");
+        for (var expected : expectedComponents) {
+            var actual = components.stream().map(value -> CompilerProtocolJson.requireObject(value, "component"))
+                    .filter(value -> stringField(value, "name").equals(expected.name())).findFirst().orElseThrow();
+            var props = CompilerProtocolJson.requireObject(CompilerProtocolJson.field(actual, "props"), "props");
+            check(props.entries().size() == expected.properties().size(), "compact surface must retain every property");
+            for (var property : expected.properties()) check(stringField(props,
+                    property.name() + (property.optional() ? "?" : "")).equals(property.type()), "property type and optionality must round-trip");
+            check(stringField(actual, "children").equals(expected.children()), "typed-child contract must remain exact");
+        }
         var repairSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
         repairSession.nextRequestJson();
         var invalidBatch = new java.util.ArrayList<Map<String, Object>>(batch);

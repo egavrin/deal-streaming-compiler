@@ -16,6 +16,9 @@ final class ConstructionSurface {
             You are building ONLY Deal UI through the compiler API. DEAL is already compiled and frozen.
             Do not create state, initializers, records, functions or handlers. Bind existing actions from deal.interface.
             You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
+            Component contracts encode props as property-name:type maps. A trailing ? in the contract key
+            marks an optional property; omit ? when binding it. Missing parent means any; missing events
+            or capabilities means empty. All pack components remain available, not a selected subset.
             Tool arguments have two fields: calls (a flat compiler constructor batch) and arguments (the granted edit).
             Every call has an id and op. Operand strings name ids in this batch, never source expressions.
             Order is irrelevant. Do not reuse inspected symbol/node ids as construction operands.
