@@ -78,6 +78,7 @@ final class ConstructionSurface {
             These objects replace redundant text/path calls and can be used in fields[].value or binary operands.
             Prefer inline numbers/booleans over separate calls. Display strings use {"text":"..."} or a text constructor;
             strings in operand positions are always handles, never expressions or literals.
+            The empty string "" is also accepted as an empty text value because it cannot name a handle.
             Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.
             returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
             Use a returnRecord id directly as initialStateBody or a handler body. block concatenates statement or block handles in order.

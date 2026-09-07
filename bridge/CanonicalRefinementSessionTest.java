@@ -492,6 +492,16 @@ public final class CanonicalRefinementSessionTest {
                 "calls", CompilerProtocolJson.field(grouped.envelope(), "calls"), "result", "body"))),
                 deal.compiler.DealConstruction.Kind.BLOCK).contains("let n: int = 1;\nreturn n;"),
                 "consumer-group repair must permit a local declaration before its use");
+        var manyCalls = new java.util.ArrayList<Map<String, Object>>();
+        manyCalls.add(cc("bad", "return", Map.of("value", "missing")));
+        for (int i = 0; i < 24; i++) manyCalls.add(cc("unchanged" + i, "integer", Map.of("value", i)));
+        var manyWorkspace = new deal.compiler.ConstructionRepairWorkspace(object(CompilerProtocolJson.encode(Map.of("calls", manyCalls))),
+                new deal.compiler.DealConstruction.Failure("bad", "missing operand"));
+        manyCalls.set(0, cc("bad", "return", Map.of("value", 1)));
+        manyWorkspace.patch(CompilerProtocolJson.requireArray(CompilerProtocolJson.field(
+                object(CompilerProtocolJson.encode(Map.of("calls", manyCalls))), "calls"), "calls"));
+        check(CompilerProtocolJson.encode(manyWorkspace.envelope()).contains("unchanged23"),
+                "unchanged echoes must not consume the changed-call budget");
         String inlineAction = new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("button", "component", Map.of("name", "Button", "children", List.of(), "fields", List.of(
                         Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Increment", "fields", List.of()))))))),
@@ -509,6 +519,13 @@ public final class CanonicalRefinementSessionTest {
                 "calls", List.of(cc("r", "returnRecord", Map.of("fields", List.of(Map.of("name", "value", "value", 1)))),
                         cc("b", "block", Map.of("statements", List.of("r")))), "result", "b"))), deal.compiler.DealConstruction.Kind.BLOCK);
         check(composedBody.equals("return {value: 1};"), "block composition must preserve statement order and semantics");
+        String emptyText = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("r", "return", Map.of("value", ""))), "result", "r"))), deal.compiler.DealConstruction.Kind.STATEMENT);
+        check(emptyText.equals("return \"\";"), "empty text is unambiguous because handle ids cannot be empty");
+        String demanded = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("unused", "return", Map.of("value", "unresolved")),
+                        cc("result", "return", Map.of("value", 7))), "result", "result"))), deal.compiler.DealConstruction.Kind.STATEMENT);
+        check(demanded.equals("return 7;"), "unpublished construction nodes must not contaminate a requested result");
         String inline = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("body", "returnRecord", Map.of("fields", List.of(
                         Map.of("name", "label", "value", Map.of("text", "Привет\n\"")),

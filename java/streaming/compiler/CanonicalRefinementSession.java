@@ -712,7 +712,7 @@ public final class CanonicalRefinementSession {
             var contract = CanonicalConstruction.contract(constructionRepairUi);
             var calls = new LinkedHashMap<String, Object>((Map<String, Object>) ((Map<?, ?>) contract.get("properties")).get("calls"));
             calls.put("minItems", 1);
-            calls.put("maxItems", 16);
+            calls.put("maxItems", 512);
             return List.of(tool("construct_repair_call", "Repair the rejected call and necessary editable consumers; optionally add dependencies. Independent calls and transaction arguments stay unchanged.", objectSchema(Map.of("calls", calls))));
         }
         if (repairWorkspace != null) {
