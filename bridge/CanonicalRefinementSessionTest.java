@@ -535,6 +535,8 @@ public final class CanonicalRefinementSessionTest {
         check(toolNames(repair).contains("construct_patch_repair_slot")
                 && !toolNames(repair).contains("construct_apply_deal_batch"), "batch failure must expose scoped repair only: " + repair);
         var repairInput = object(stringField(object(repair), "input"));
+        check(!stringField(object(repair), "instructions").contains("ONE construct_apply_deal_batch"),
+                "scoped repair instructions must not tell the model to regenerate the full app");
         var omittedSlots = CompilerProtocolJson.requireArray(CompilerProtocolJson.field(repairInput, "otherPreservedSlots"), "omitted slots");
         check(!omittedSlots.items().isEmpty(), "unrelated slots must not be expanded into repair context");
         String omittedId = stringField(CompilerProtocolJson.requireObject(omittedSlots.items().get(0), "slot"), "slot");

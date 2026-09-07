@@ -75,15 +75,11 @@ final class ConstructionSurface {
             Only compiler dependency slots are expanded. Other preserved slots are summarized; query_repair_context
             can read them if needed, but never grants permission to change them.
             Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
-            Build state, initialState and all action-handler pairs in ONE construct_apply_deal_batch call.
-            Set arguments.final=true when requested behavior is complete; do not reserve a separate finish round.
-            Use final=false only when another batch is necessary. supportingDeclarations are data records/helpers;
-            action types belong in actionHandlers together with their handlers in the same batch.
             Its handler MUST use declareUpdate, parameters state:AppState and action:YourActionType, returns:AppState.
             Read state fields through reference(name=state) and field(object=<state handle>, name=<field name>).
             State and action are borrowed: never assign to them. Construct and return replacement state instead,
             preserving unchanged fields. A void function or assignment to a bare state field is NOT an update.
-            Supply each action/handler pair in arguments.actionHandlers using their declaration handles.
+            When the authorized tool accepts actionHandlers, supply each action/handler pair there using declaration handles.
             Creating an unused handler call does not install it. Empty actionHandlers cannot satisfy behavior.
             declareFunction is for ordinary helper functions, not UI input handlers.
             For Deal UI, component names come from the supplied pack. fields bind named properties to value handles;

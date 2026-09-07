@@ -372,8 +372,18 @@ public final class CanonicalRefinementSession {
     }
 
     private String instructions() {
-        if (constructionApi) return (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
-                ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS;
+        if (constructionApi) {
+            if (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
+                return ConstructionSurface.UI_INSTRUCTIONS;
+            String stage = repairWorkspace != null
+                    ? "Repair only the active slot using construct_patch_repair_slot. Do not rebuild the application or accepted siblings."
+                    : generation && generationStage().equals("bootstrap")
+                    ? "Build state, initialState and all action-handler pairs in ONE construct_apply_deal_batch call. Set arguments.final=true when behavior is complete; final=false only when another batch is necessary."
+                    : generation && generationStage().equals("declarations")
+                    ? "The foundation is already committed. Use construct_append_deal_behavior to add missing action-handler pairs and supporting declarations. Do not resend AppState or initialState. Set final=true when behavior is complete."
+                    : "Use only the currently authorized edit operations; do not rebuild unchanged declarations.";
+            return ConstructionSurface.INSTRUCTIONS + "\n" + stage;
+        }
         if (generation) {
             return forcedArtifact.equals("dealui")
                     ? DEAL_UI_GENERATION_SYSTEM_PROMPT
