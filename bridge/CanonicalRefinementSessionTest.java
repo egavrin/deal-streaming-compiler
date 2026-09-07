@@ -510,6 +510,24 @@ public final class CanonicalRefinementSessionTest {
                 "appStateDeclaration", "stateType", "initialStateBody", "init",
                 "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", true);
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
+        var constructorSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
+        constructorSession.nextRequestJson();
+        var wrongKind = new java.util.ArrayList<Map<String, Object>>(batch);
+        wrongKind.set(foundation.size(), cc("actionType", "record", Map.of("fields", List.of())));
+        String wrongEnvelope = construction(wrongKind, batchArguments);
+        String validation = constructorSession.validateToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of(
+                "name", "construct_apply_deal_batch", "arguments", object(wrongEnvelope)))));
+        check(validation.contains("\"valid\":true"), "constructor type mismatch is not a transport failure");
+        String constructorRepair = constructorSession.acceptToolCallJson("construct_apply_deal_batch", wrongEnvelope);
+        check(toolNames(constructorRepair).equals(List.of("construct_repair_call")), "only narrow constructor repair may be offered");
+        check(stringField(object(constructorRepair), "input").contains("DECLARATION"), "typed diagnostic must reach the model");
+        expectRejected(() -> constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(behavior.get(0), foundation.get(2))))));
+        check(constructorRepair.equals(constructorSession.nextRequestJson()), "unauthorized sibling edits must not change repair state");
+        String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0)))));
+        check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired declaration must resume the original batch");
+        check(CompilerProtocolJson.encode(CompilerProtocolJson.field(object(constructorFixed), "revision")).equals(
+                CompilerProtocolJson.encode(CompilerProtocolJson.field(object(ui), "revision"))), "constructor repair must preserve every sibling and original transaction argument");
         check(!toolNames(ui).contains("finish_deal"), "final batch must transition without a completion round");
         check(toolNames(ui).contains("construct_apply_deal_ui_changes"), "UI must have no source fallback");
         check(stringField(object(ui), "reasoningEffort").equals("none"), "UI reasoning must remain independent");

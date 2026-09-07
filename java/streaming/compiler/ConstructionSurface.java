@@ -145,6 +145,15 @@ final class ConstructionSurface {
         return requireObject(lowerValue(args, "", false, operation, calls, ui), "projected arguments");
     }
 
+    static void validateHandleSyntax(CanonicalJson.Value value, String key, boolean producer) {
+        if (value instanceof CanonicalJson.Str s && (CODE_FIELDS.contains(key) || producer))
+            DealConstruction.validateHandle(s.value());
+        else if (value instanceof CanonicalJson.Obj object)
+            for (var e : object.entries()) validateHandleSyntax(e.value(), e.key(), key.equals("stateProducerBodies"));
+        else if (value instanceof CanonicalJson.Arr array)
+            for (var item : array.items()) validateHandleSyntax(item, key, producer);
+    }
+
     private static CanonicalJson.Value lowerValue(CanonicalJson.Value value, String key, boolean producer,
             String operation, CanonicalJson.Arr calls, boolean ui) {
         if (value instanceof CanonicalJson.Str s && (CODE_FIELDS.contains(key) || producer)) {

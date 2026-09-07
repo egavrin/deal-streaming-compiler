@@ -17,6 +17,7 @@ import deal.compiler.CompilerProtocolJson;
 import deal.compiler.DealCompilerWorkspace;
 import deal.semantic.ir.CanonicalJson;
 import deal.ui.CanonicalCompiler;
+import deal.ui.CanonicalConstruction;
 import deal.ui.UiCompilerWorkspace;
 
 import java.util.ArrayList;
@@ -30,6 +31,10 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
+    private deal.compiler.ConstructionRepairWorkspace constructionRepair;
+    private String constructionRepairTool;
+    private boolean constructionRepairUi;
+    private int constructionRepairAttempts;
     private boolean constructionApi;
     private final Set<String> requestedRepairContext = new LinkedHashSet<>();
     private String dealReasoningEffort = "low";
@@ -334,6 +339,7 @@ public final class CanonicalRefinementSession {
             uiConstructionTools.clear();
             tools = tools.stream().map(tool -> {
                 String name = (String) tool.get("name");
+                if (name.equals("construct_repair_call")) return tool;
                 boolean ui = repairWorkspace != null ? repairArtifact.equals("dealui")
                         : forcedArtifact.equals("dealui") || name.contains("_ui_");
                 var adapted = ConstructionSurface.tool(tool, ui);
@@ -372,6 +378,8 @@ public final class CanonicalRefinementSession {
     }
 
     private String instructions() {
+        if (constructionRepair != null) return (constructionRepairUi ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
+                + "\nRepair only constructorRepair.target. Send its complete replacement call plus any NEW dependency calls (maximum eight calls total). Existing sibling calls and transaction arguments are preserved by the compiler. Never regenerate the application. A VALUE is not a DECLARATION; use declareRecord for a type, record for a value. Text properties need text-constructor handles.";
         if (constructionApi) {
             if (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
                 return ConstructionSurface.UI_INSTRUCTIONS;
@@ -450,9 +458,8 @@ public final class CanonicalRefinementSession {
         Map<String, Object> tool = issuedTools.stream().filter(value -> name.equals(value.get("name")))
                 .findFirst().orElseThrow(() -> new IllegalArgumentException("Tool is not granted by the current surface: " + name));
         validateSchema(arguments, (Map<?, ?>) tool.get("parameters"));
-        if (constructionApi && name.startsWith("construct_"))
-            ConstructionSurface.lower(arguments, uiConstructionTools.contains(name),
-                    repairWorkspace == null ? "" : activeRejectedRepairSlot().operation());
+        if (constructionApi && name.startsWith("construct_")) ConstructionSurface.validateHandleSyntax(arguments, "", false);
+        if (name.equals("construct_repair_call")) constructionRepair.validatePatch(CompilerProtocolJson.requireArray(field(arguments, "calls"), "calls"));
     }
 
     private static void validateSchema(CanonicalJson.Value value, Map<?, ?> schema) {
@@ -504,9 +511,29 @@ public final class CanonicalRefinementSession {
     }
 
     private void acceptToolCall(String name, CanonicalJson.Obj arguments) {
+        if (name.equals("construct_repair_call")) {
+            constructionRepair.patch(CompilerProtocolJson.requireArray(field(arguments, "calls"), "calls"));
+            name = constructionRepairTool;
+            arguments = constructionRepair.envelope();
+        }
         if (constructionApi && name.startsWith("construct_")) {
-            arguments = ConstructionSurface.lower(arguments, uiConstructionTools.contains(name),
-                    repairWorkspace == null ? "" : activeRejectedRepairSlot().operation());
+            boolean ui = constructionRepair != null ? constructionRepairUi : uiConstructionTools.contains(name);
+            try {
+                arguments = ConstructionSurface.lower(arguments, ui,
+                        repairWorkspace == null ? "" : activeRejectedRepairSlot().operation());
+            } catch (deal.compiler.DealConstruction.Failure failure) {
+                if (constructionRepair == null) constructionRepair = new deal.compiler.ConstructionRepairWorkspace(arguments, failure);
+                else constructionRepair.reject(failure);
+                constructionRepairTool = name;
+                constructionRepairUi = ui;
+                semanticRepairs++;
+                constructionRepairAttempts++;
+                addTranscript(name, Map.of("stage", "constructor-repair", "diagnostic", failure.getMessage()));
+                if (constructionRepairAttempts > maxSemanticRepairs) fail("SC1010", "Constructor repair budget exhausted: " + failure.getMessage());
+                return;
+            }
+            constructionRepair = null;
+            constructionRepairAttempts = 0;
             name = name.substring("construct_".length());
         }
         switch (name) {
@@ -584,6 +611,7 @@ public final class CanonicalRefinementSession {
     private String input() {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("request", instruction);
+        if (constructionRepair != null) context.put("constructorRepair", constructionRepair.snapshot());
         if (stateEvolutionAvailable()) {
             context.put("stateProducers", CanonicalCompiler.queryRootStateProducers(deal).stream()
                     .map(this::compactDealSlice).toList());
@@ -666,6 +694,13 @@ public final class CanonicalRefinementSession {
     }
 
     private List<Map<String, Object>> tools() {
+        if (constructionRepair != null) {
+            var contract = CanonicalConstruction.contract(constructionRepairUi);
+            var calls = new LinkedHashMap<String, Object>((Map<String, Object>) ((Map<?, ?>) contract.get("properties")).get("calls"));
+            calls.put("minItems", 1);
+            calls.put("maxItems", 8);
+            return List.of(tool("construct_repair_call", "Replace only the rejected constructor call and optionally add new dependency calls. All existing siblings and transaction arguments stay unchanged.", objectSchema(Map.of("calls", calls))));
+        }
         if (repairWorkspace != null) {
             List<Map<String, Object>> repairTools = new ArrayList<>();
             repairTools.add(repairSlotTool());
