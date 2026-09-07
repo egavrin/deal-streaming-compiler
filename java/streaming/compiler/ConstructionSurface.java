@@ -120,6 +120,12 @@ final class ConstructionSurface {
             Only compiler dependency slots are expanded. Other preserved slots are summarized; query_repair_context
             can read them if needed, but never grants permission to change them.
             Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
+            Native form controls do not own application data. Store every editable draft value in AppState,
+            with a typed change action/handler that replaces that value while preserving the other fields.
+            A text input emits one string; an integer input emits one int. A button click has NO payload
+            and cannot read sibling controls. A submit action reads the drafts from state, or receives
+            explicit existing state paths. Do not require a button to manufacture a multi-field event.
+            Deal UI runs only after DEAL is frozen: missing draft fields/setters cannot be added by the UI agent.
             Its handler MUST use declareUpdate, parameters state:AppState and action:YourActionType, returns:AppState.
             Read state fields through inline {"path":["state","fieldName"]}.
             State and action are borrowed: never assign to them. Construct and return replacement state instead,
