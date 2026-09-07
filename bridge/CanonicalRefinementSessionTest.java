@@ -474,6 +474,15 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        String inlineAction = new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("button", "component", Map.of("name", "Button", "children", List.of(), "fields", List.of(
+                        Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Increment", "fields", List.of()))))))),
+                "result", "button"))), deal.compiler.DealConstruction.Kind.UI);
+        check(inlineAction.equals("ui.Button(onClick: action app.Increment {  })"), "inline action must use the same checked action projection");
+        expectRejected(() -> new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("button", "component", Map.of("name", "Button", "children", List.of(), "fields", List.of(
+                        Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Bad()", "fields", List.of()))))))),
+                "result", "button"))), deal.compiler.DealConstruction.Kind.UI));
         var unknownField = deal.compiler.DealCompilerWorkspace.inspect(
                 "export class State { enabled: MissingType = false; }\nexport function initial(): State { return {enabled: false}; }", "/app.deal");
         check(unknownField.diagnostics().stream().anyMatch(d -> d.code().equals("E3004") && d.message().contains("MissingType")),

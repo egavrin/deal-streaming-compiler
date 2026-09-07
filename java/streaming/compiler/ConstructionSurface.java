@@ -31,6 +31,8 @@ final class ConstructionSurface {
             reference(name=state) plus field(object=<state id>,name=<field>) binds state data.
             reference(name=ui) plus field binds an exact UI constant from the pack if its property needs one.
             action(name=<existing action type>,fields=[...]) creates an Action value, NOT a class declaration.
+            Component action properties may inline {"action":{"name":"ExistingAction","fields":[]}} instead of a separate action handle.
+            Action payload fields use ordinary VALUE operands, for example {"name":"value","value":{"path":["payload"]}}.
             component(name=<exact pack component>,fields=[{name:<property>,value:<VALUE id>}],children=[UI ids])
             constructs a UI node. Children is always present, even if empty. Use only declared properties.
             uiBody(children=[UI ids]) produces the result handle for replaceViewBody or a repair body slot.
