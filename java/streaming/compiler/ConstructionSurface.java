@@ -60,6 +60,14 @@ final class ConstructionSurface {
             Work only through compiler construction API calls, not source code. Source shown in read-only context
             is for inspection only. Never output code, expressions, signatures or declarations as strings.
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
+            The top-level object MUST contain BOTH calls AND arguments. Defining calls alone installs nothing.
+            For construct_apply_deal_batch the envelope is:
+            {"calls":[...],"arguments":{"appStateDeclaration":"stateDecl","initialStateBody":"initBody",
+            "supportingDeclarations":[],"actionHandlers":[{"actionDeclaration":"actionDecl","handlerDeclaration":"handlerDecl"}],
+            "capabilities":[],"final":true}}.
+            Define each referenced handle in calls. Put helper types/functions in supportingDeclarations;
+            put nominal input actions and their declareUpdate handlers only in actionHandlers, not both lists.
+            Do not submit a skeleton or only types. Include the actual transition bodies and register them.
             operands are ids of calls in the same batch. Order is irrelevant; cycles are rejected.
             These ids are temporary compiler value handles, not program variables or inspected symbol/node IDs.
             VALUE operands may be a handle string, an inline integer, or an inline boolean.
@@ -73,6 +81,9 @@ final class ConstructionSurface {
             Use a returnRecord id directly as initialStateBody or a handler body. Never place it in block.statements.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
             one program variable; field selects a member. record assembles fields from value handles. binary computes
+            if is a STATEMENT, not a conditional value: then and else must be BLOCK handles.
+            For a conditional computed value, declare a fresh local, assign it inside if branches,
+            then use its reference in the returning record. Blocks contain statement handles, never VALUE handles.
             a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
             In transaction arguments, all declaration/body/source/expression fields contain result handles, NOT code.
