@@ -53,9 +53,14 @@ DEAL; private DEAL changes do not regenerate Deal UI; public interface changes u
 UI nodes. The final source pair is fully checked and published atomically.
 
 Repair remains scoped to compiler-owned slots and dependency groups. Accepted unrelated slots are
-absent from the writable schema and preserve their payload digests. During repair the only model
-write is `patch_repair_slot`; its operation and target are immutable. Repeating an unchanged rejected
-payload is no progress. Full-program regeneration is a deliberate fallback, not normal repair.
+absent from the writable schema and preserve their payload digests. The compatibility protocol uses
+`patch_repair_slot`. Explicitly negotiated `repair-workspace-v2` uses compiler-issued group grants:
+`expand_repair_scope` changes permissions only, and `construct_apply_repair_transaction` applies
+source-free slot patches and exactly granted dependencies. The engine cannot broaden a grant.
+Repeating a rejected candidate is no progress. Full-program regeneration is not a repair fallback.
+Studio explicitly negotiates v2 by default after deterministic protocol and bridge checks.
+Missing capabilities fail closed; there is no silent v1 fallback. This internal default does not
+mean the stochastic or product release gates have passed.
 
 ## Generalization
 

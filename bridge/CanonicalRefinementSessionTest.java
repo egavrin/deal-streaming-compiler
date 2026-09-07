@@ -48,6 +48,7 @@ public final class CanonicalRefinementSessionTest {
     public static void main(String[] args) {
         argumentRepairIsScopedAndTransactional();
         sourceFreeConstructionCompilesAndRepairs();
+        sourceFreeAgentAllocatesUiRepairSlot();
         greenfieldHostReadinessGatesUi();
         diagnosticCompactionPreservesLocationsAndEvidence();
         inspectChangeUnlocksCompilerOwnedCone();
@@ -576,6 +577,8 @@ public final class CanonicalRefinementSessionTest {
         } catch (deal.compiler.DealConstruction.Failure failure) {
             check(failure.ownerId.equals("content") && failure.getMessage().contains("NEW component constructor"),
                     "wrong-kind diagnostic must explain the required UI wrapper and target the consuming node");
+            check(failure.code.equals("CC1005") && failure.facts.get("expectedKind").equals("UI")
+                    && failure.facts.get("actualKind").equals("VALUE"), "constructor kind mismatch must expose structured facts");
             var workspace = new deal.compiler.ConstructionRepairWorkspace(scalarChildEnvelope, failure);
             var patchCalls = List.of(
                     cc("labelNode", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
@@ -707,6 +710,28 @@ public final class CanonicalRefinementSessionTest {
         var batchArguments = Map.<String, Object>of("supportingDeclarations", List.of(), "capabilities", List.of(),
                 "appStateDeclaration", "stateType", "initialStateBody", "init",
                 "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", true);
+        var v2 = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 16, 5)
+                .useConstructionApi().withRepairProtocol("repair-workspace-v2");
+        check(stringField(object(v2.nextRequestJson()), "repairProtocol").equals("repair-workspace-v2"), "repair version must be negotiated");
+        var missingTypeBatch = new java.util.ArrayList<Map<String, Object>>(batch);
+        missingTypeBatch.add(cc("leafDefault", "record", Map.of("fields", List.of(Map.of("name", "value", "value", 0)))));
+        missingTypeBatch.add(cc("holder", "declareRecord", Map.of("name", "Holder", "fields", List.of(
+                Map.of("name", "leaf", "type", "Leaf", "value", "leafDefault")))));
+        var missingTypeArgs = new java.util.LinkedHashMap<String, Object>(batchArguments);
+        missingTypeArgs.put("supportingDeclarations", List.of("holder"));
+        String missingTypeRepair = v2.acceptToolCallJson("construct_apply_deal_batch", construction(missingTypeBatch, missingTypeArgs));
+        check(toolNames(missingTypeRepair).contains("expand_repair_scope"), "missing type must offer scope expansion: " + missingTypeRepair);
+        var repairGroup = inputObject(missingTypeRepair, "repairGroup");
+        var obligations = requireArray(field(repairGroup, "obligations"), "obligations");
+        String obligation = stringField(CompilerProtocolJson.requireObject(obligations.items().getFirst(), "obligation"), "id");
+        String expanded = v2.acceptToolCallJson("expand_repair_scope", CompilerProtocolJson.encode(Map.of("expansions", List.of("add:" + obligation))));
+        check(CompilerProtocolJson.intField(object(expanded), "semanticRepairs") == CompilerProtocolJson.intField(object(missingTypeRepair), "semanticRepairs"),
+                "scope expansion must not consume semantic repair");
+        check(!toolNames(expanded).contains("construct_apply_deal_batch"), "scope expansion must not reopen full generation");
+        String dependencyFixed = v2.acceptToolCallJson("construct_apply_repair_transaction", construction(List.of(
+                cc("leaf", "declareRecord", Map.of("name", "Leaf", "fields", List.of(Map.of("name", "value", "type", "int", "value", 0))))),
+                Map.of("patches", List.of(), "dependencies", List.of(Map.of("obligation", obligation, "declaration", "leaf")))));
+        check(toolNames(dependencyFixed).contains("construct_apply_deal_ui_changes"), "source-free dependency repair must advance to UI: " + dependencyFixed);
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
         var argumentSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
         String beforeArguments = argumentSession.nextRequestJson();
@@ -818,6 +843,16 @@ public final class CanonicalRefinementSessionTest {
                 cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", "buttonText"), Map.of("name", "onClick", "value", "action")), "children", List.of())),
                 cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("text", "button"))),
                 cc("body", "uiBody", Map.of("children", List.of("column")))));
+        String v2UiRejected = v2.acceptToolCallJson("construct_apply_deal_ui_changes", construction(nodes, Map.of(
+                "operations", List.of(Map.of("operation", "replaceViewBody", "body", "body")), "final", true)));
+        check(v2UiRejected.contains("construct_apply_repair_transaction"), "UI type error must use negotiated repair API: " + v2UiRejected);
+        var v2UiNodes = new java.util.ArrayList<Map<String, Object>>(nodes);
+        v2UiNodes.set(0, cc("label", "text", Map.of("value", "Counter")));
+        String v2Completed = v2.acceptToolCallJson("construct_apply_repair_transaction", construction(v2UiNodes, Map.of(
+                "patches", List.of(Map.of("slot", "R1", "operation", "replaceViewBody", "payload", Map.of("body", "body"))),
+                "dependencies", List.of())));
+        check(booleanField(object(v2Completed), "accepted"), "v2 agent must publish checked pair: " + v2Completed);
+        check(stringField(object(v2Completed), "deal").contains("class Leaf"), "granted dependency must survive UI repair");
         String rejected = session.acceptToolCallJson("construct_apply_deal_ui_changes", construction(nodes, Map.of(
                 "operations", List.of(Map.of("operation", "replaceViewBody", "body", "body")), "final", true)));
         check(rejected.contains("UI2031") && toolNames(rejected).contains("construct_patch_repair_slot"),
@@ -1043,6 +1078,33 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
+    }
+
+    private static void sourceFreeAgentAllocatesUiRepairSlot() {
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack",
+                "Reorganize the controls", 8, 3).useConstructionApi().withRepairProtocol("repair-workspace-v2");
+        String initial = session.nextRequestJson();
+        String button = uiNodeAlias(initial, "ui.Button");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(button), "requestedOperations", List.of("replaceSubtree"))));
+        check(toolNames(write).contains("construct_replace_deal_ui_subtree"), "agent must receive a source-free subtree tool");
+        String rejected = session.acceptToolCallJson("construct_replace_deal_ui_subtree", construction(List.of(
+                cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("text", "Moved"))), "children", List.of()))),
+                Map.of("target", button, "source", "text", "final", true)));
+        check(toolNames(rejected).contains("expand_ui_repair_scope"), "missing action binding must expose compiler insertion: " + rejected);
+        int repairs = CompilerProtocolJson.intField(object(rejected), "semanticRepairs");
+        String expanded = session.acceptToolCallJson("expand_ui_repair_scope", CompilerProtocolJson.encode(Map.of("insertion", "N1")));
+        check(CompilerProtocolJson.intField(object(expanded), "semanticRepairs") == repairs, "permission expansion does not spend semantic budget");
+        check(toolNames(expanded).contains("construct_apply_repair_transaction"), "new slot must be writable only through constructors");
+        String result = session.acceptToolCallJson("construct_apply_repair_transaction", construction(List.of(
+                cc("action", "action", Map.of("name", "IncrementAction", "fields", List.of())),
+                cc("button", "component", Map.of("name", "Button", "fields", List.of(
+                        Map.of("name", "text", "value", Map.of("text", "Increment")), Map.of("name", "onClick", "value", "action")), "children", List.of()))),
+                Map.of("patches", List.of(Map.of("slot", "R2", "operation", "insertChild",
+                        "payload", Map.of("index", 2, "source", "button"))), "dependencies", List.of())));
+        check(result.contains("\"accepted\":true"), "agent-issued insertion must finish the pair: " + result);
+        check(stringField(object(result), "deal").equals(DEAL), "UI repair must preserve exact DEAL bytes");
+        check(stringField(object(result), "dealUi").contains("Moved"), "original staged change must survive new-slot repair");
     }
 
     private static void interfaceChangeUsesMinimalChildInsertion() {

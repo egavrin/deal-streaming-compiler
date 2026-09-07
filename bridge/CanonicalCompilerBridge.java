@@ -23,6 +23,7 @@ public final class CanonicalCompilerBridge {
         if (args.length == 0) throw new IllegalArgumentException("Missing compiler command");
         Object response = switch (args[0]) {
             case "handshake" -> CanonicalCompiler.handshake();
+            case "repair-diagnostics" -> deal.ui.UiRepairDiagnostics.registry().codes();
             case "inspect-deal" -> inspectDeal(args);
             case "query-deal-module" -> queryDealModule(args);
             case "query-deal-symbol" -> queryDealSymbol(args);

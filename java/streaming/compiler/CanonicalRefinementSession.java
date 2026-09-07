@@ -1,4 +1,5 @@
 package streaming.compiler;
+import deal.compiler.RepairWorkspaceProtocol;
 
 import deal.compiler.CompilerProtocol.ChangeSetPrecondition;
 import deal.compiler.CompilerProtocol.ChangeInspection;
@@ -39,6 +40,10 @@ public final class CanonicalRefinementSession {
     private boolean constructionRepairUi;
     private int constructionRepairAttempts;
     private boolean constructionApi;
+    private boolean repairV2;
+    private deal.compiler.RepairWorkspaceProtocol.Grant repairGrant;
+    private int repairScopeExpansions;
+    private final Set<String> rejectedRepairCandidates = new LinkedHashSet<>();
     private final Set<String> requestedRepairContext = new LinkedHashSet<>();
     private String dealReasoningEffort = "low";
     private String uiReasoningEffort = "none";
@@ -57,6 +62,17 @@ public final class CanonicalRefinementSession {
     public CanonicalRefinementSession useConstructionApi() {
         if (rounds != 0) throw new IllegalStateException("Select construction API before issuing requests");
         constructionApi = true;
+        return this;
+    }
+
+    public CanonicalRefinementSession withRepairProtocol(String version) {
+        if (rounds != 0 || !lastIssuedRequest.isEmpty() || !constructionApi)
+            throw new IllegalStateException("Negotiate repair protocol before issuing any source-free request");
+        if (!RepairWorkspaceProtocol.VERSION.equals(version)
+                || !CanonicalCompiler.handshake().features().containsAll(List.of(
+                    "repair-workspace-v2-local-groups", "repair-workspace-v2-ui-insertions")))
+            throw new IllegalArgumentException("Unsupported repair protocol: " + version);
+        repairV2 = true;
         return this;
     }
     private static final String AGENT_SURFACE_VERSION = "agent-surface-v13";
@@ -332,6 +348,11 @@ public final class CanonicalRefinementSession {
 
     public String nextRequestJson() {
         if (status != Status.REQUEST) return resultJson();
+        if (repairV2 && repairWorkspace != null && constructionRepair == null
+                && CanonicalCompiler.inspectRepair(repairWorkspace).disposition() == RepairWorkspaceProtocol.Disposition.UNSUPPORTED) {
+            fail("SC1011", CanonicalCompiler.inspectRepair(repairWorkspace).reason());
+            return resultJson();
+        }
         if (argumentRepair != null) return argumentRepair.request(lastIssuedRequest);
         if (writeRounds >= maxRounds) {
             fail("SC1001", "Refinement round budget exhausted");
@@ -380,12 +401,17 @@ public final class CanonicalRefinementSession {
                 ? 32768 : tools.stream().anyMatch(tool -> "construct_apply_deal_ui_changes".equals(tool.get("name"))) ? 16384 : 8192);
         request.put("round", rounds + 1);
         request.put("semanticRepairs", semanticRepairs);
+        request.put("repairProtocol", repairV2 ? "repair-workspace-v2" : "repair-workspace-v1");
+        request.put("scopeExpansions", repairScopeExpansions);
         request.put("argumentRepairRounds", argumentRepairRounds);
         lastIssuedRequest = new LinkedHashMap<>(request);
         return CompilerProtocolJson.encode(request);
     }
 
     private String instructions() {
+        if (repairV2 && repairWorkspace != null && constructionRepair == null)
+            return (repairArtifact.equals("dealui") ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
+                    + "\nThe current repairGroup supersedes active-slot instructions. Use expand_repair_scope to request an offered grant, then construct_apply_repair_transaction. Change only granted slots. Add only dependencies with granted obligation ids. Empty patches or dependencies arrays mean no changes in that category. Never resubmit the original application batch.";
         if (constructionRepair != null) return (constructionRepairUi ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
                 + "\nRepair constructorRepair.target and only the necessary consumers listed in constructorRepair.editable. Send complete replacement calls plus NEW dependencies (maximum sixteen calls). You may insert a new local into the editable enclosing block when fixing an invalid value/statement use. Independent calls and transaction arguments are immutable. Never regenerate the application. A VALUE is not a DECLARATION; use declareRecord for a type, record for a value. Text properties accept inline {\"text\":\"...\"}.";
         if (constructionApi) {
@@ -610,6 +636,26 @@ public final class CanonicalRefinementSession {
             case "replace_deal_ui_subtree" -> replaceDealUiSubtree(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
+            case "expand_repair_scope" -> {
+                var expansions = new LinkedHashSet<String>();
+                if (repairGrant != null) expansions.addAll(repairGrant.expansions());
+                expansions.addAll(stringArray(arguments, "expansions"));
+                repairGrant = CanonicalCompiler.expandRepairScope(repairWorkspace, repairWorkspace.workspaceDigest(), List.copyOf(expansions));
+                repairScopeExpansions++;
+            }
+            case "expand_ui_repair_scope" -> {
+                var insertions = uiRepairInsertions();
+                String selected = string(arguments, "insertion");
+                int index = java.util.stream.IntStream.range(0, insertions.size())
+                        .filter(i -> selected.equals("N" + (i + 1))).findFirst()
+                        .orElseThrow(() -> new IllegalArgumentException("UI insertion is not granted"));
+                repairWorkspace = CanonicalCompiler.expandUiRepairInsertion(deal, dealUi, pack, packSpecifier,
+                        repairWorkspace, repairWorkspace.workspaceDigest(), insertions.get(index).id());
+                repairGrant = null;
+                repairScopeExpansions++;
+                addTranscript("expand_ui_repair_scope", Map.of("insertion", selected, "slots", repairWorkspace.slots().size()));
+            }
+            case "apply_repair_transaction" -> applyRepairTransaction(arguments);
             case "query_repair_context" -> requestedRepairContext.addAll(stringArrayOr(arguments, "slots", List.of()));
             case "drop_repair_slot" -> dropRepairSlot(arguments);
             case "artifact_unchanged" -> artifactUnchanged(arguments);
@@ -619,7 +665,7 @@ public final class CanonicalRefinementSession {
     }
 
     private static boolean isReadOnlyQuery(String name) {
-        return name.equals("query_deal_module")
+        return name.equals("expand_repair_scope") || name.equals("expand_ui_repair_scope") || name.equals("query_deal_module")
                 || name.equals("query_repair_context")
                 || name.equals("query_ui_contracts")
                 || name.equals("inspect_deal_change")
@@ -660,6 +706,23 @@ public final class CanonicalRefinementSession {
         if (constructionRepair != null) {
             context.put("constructorRepair", constructionRepair.snapshot());
             context.put("requiredArtifact", constructionRepairUi ? "dealui" : "deal");
+            return CompilerProtocolJson.encode(context);
+        }
+        if (repairV2 && repairWorkspace != null) {
+            var offer = CanonicalCompiler.inspectRepair(repairWorkspace);
+            var insertions = uiRepairInsertions();
+            if (!insertions.isEmpty()) context.put("uiInsertions", java.util.stream.IntStream.range(0, insertions.size()).mapToObj(i -> {
+                var insertion = insertions.get(i);
+                return Map.of("insertion", "N" + (i + 1), "operation", "insertChild", "index", insertion.index(),
+                        "parentContract", insertion.parentContracts(),
+                        "diagnostics", compactDiagnostics(insertion.obligations()));
+            }).toList());
+            context.put("repairGroup", Map.of("artifact", repairArtifact, "disposition", offer.disposition().name(),
+                    "obligations", offer.obligations(), "expansions", offer.expansions(),
+                    "diagnostics", compactDiagnostics(offer.diagnostics()),
+                    "slots", repairWorkspace.slots().stream().filter(s -> repairContextSlotIds().contains(s.slotId()))
+                            .map(s -> Map.of("slot", s.slotId(), "operation", s.operation(), "payload", agentRepairPayload(s),
+                                    "writable", repairGrant == null ? offer.slots().contains(s.slotId()) : repairGrant.slots().contains(s.slotId()))).toList()));
             return CompilerProtocolJson.encode(context);
         }
         if (stateEvolutionAvailable()) {
@@ -763,6 +826,7 @@ public final class CanonicalRefinementSession {
         }
         if (repairWorkspace != null) {
             List<Map<String, Object>> repairTools = new ArrayList<>();
+            if (repairV2) return repairV2Tools();
             repairTools.add(repairSlotTool());
             RepairSlot active = activeRejectedRepairSlot();
             if (constructionApi) {
@@ -1123,7 +1187,51 @@ public final class CanonicalRefinementSession {
                         "payload", payload)));
     }
 
+    private List<Map<String, Object>> repairV2Tools() {
+        var offer = CanonicalCompiler.inspectRepair(repairWorkspace);
+        var result = new ArrayList<Map<String, Object>>();
+        var insertions = uiRepairInsertions();
+        if (!insertions.isEmpty()) result.add(tool("expand_ui_repair_scope",
+                "Allocate one compiler-authorized UI insertion slot. No code is applied; fill the new slot in the next transaction.",
+                objectSchema(Map.of("insertion", enumSchema(java.util.stream.IntStream.range(0, insertions.size())
+                        .mapToObj(i -> "N" + (i + 1)).toList())))));
+        var omitted = repairWorkspace.slots().stream().filter(s -> !repairContextSlotIds().contains(s.slotId())).map(RepairSlot::slotId).toList();
+        if (!omitted.isEmpty()) result.add(tool("query_repair_context", "Read at most eight preserved slots; this grants no writes.",
+                objectSchema(Map.of("slots", Map.of("type", "array", "minItems", 1, "maxItems", 8, "uniqueItems", true, "items", enumSchema(omitted))))));
+        var availableExpansions = offer.expansions().stream().map(RepairWorkspaceProtocol.Expansion::id)
+                .filter(id -> repairGrant == null || !repairGrant.expansions().contains(id)).toList();
+        if (!availableExpansions.isEmpty()) result.add(tool("expand_repair_scope", "Request only compiler-offered scope expansions; changes no code.",
+                objectSchema(Map.of("expansions", Map.of("type", "array", "minItems", 1, "uniqueItems", true,
+                        "items", enumSchema(availableExpansions))))));
+        if (repairGrant == null) repairGrant = CanonicalCompiler.expandRepairScope(repairWorkspace, repairWorkspace.workspaceDigest(), List.of());
+        var alternatives = repairWorkspace.slots().stream().filter(s -> repairGrant.slots().contains(s.slotId())).map(s -> {
+            var properties = new LinkedHashMap<String, Object>();
+            s.payload().keySet().forEach(key -> properties.put(key, key.equals("index") ? Map.of("type", "integer", "minimum", 0)
+                    : key.equals("newParentId") ? enumSchema(aliases("U")) : repairStringSchema(s, key)));
+            return objectSchema(Map.of("slot", constantString(s.slotId()), "operation", constantString(s.operation()),
+                    "payload", objectSchema(properties)));
+        }).toList();
+        Map<String, Object> dependencies = repairGrant.obligations().isEmpty()
+                ? Map.of("type", "array", "maxItems", 0, "items", Map.of("type", "object"))
+                : Map.of("type", "array", "maxItems", repairGrant.obligations().size(), "items",
+                    objectSchema(Map.of("obligation", enumSchema(repairGrant.obligations()), "declaration", Map.of("type", "string"))));
+        result.add(tool("apply_repair_transaction", "Apply the current compiler-issued group grant atomically. Unrelated slots are immutable.",
+                objectSchema(Map.of("patches", Map.of("type", "array", "maxItems", alternatives.size(), "items", Map.of("anyOf", alternatives)),
+                        "dependencies", dependencies))));
+        return result;
+    }
+
+    private List<UiCompilerWorkspace.RepairInsertion> uiRepairInsertions() {
+        return repairV2 && repairWorkspace != null && repairArtifact.equals("dealui")
+                ? CanonicalCompiler.inspectUiRepairInsertions(deal, dealUi, pack, packSpecifier, repairWorkspace) : List.of();
+    }
+
     private RepairSlot activeRejectedRepairSlot() {
+        if (repairV2) {
+            var offer = CanonicalCompiler.inspectRepair(repairWorkspace);
+            return repairWorkspace.slots().stream().filter(s -> offer.slots().contains(s.slotId())).findFirst()
+                    .orElseThrow(() -> new IllegalStateException(offer.reason()));
+        }
         return repairWorkspace.slots().stream()
                 .filter(value -> value.status() == RepairSlotStatus.REJECTED)
                 .findFirst().orElseThrow(() -> new IllegalStateException("Repair workspace has no rejected slot"));
@@ -1140,6 +1248,7 @@ public final class CanonicalRefinementSession {
                     .findFirst().ifPresent(group -> pending.addAll(group.dependsOn()));
         }
         var slots = new LinkedHashSet<String>(requestedRepairContext);
+        if (repairV2 && repairGrant != null) slots.addAll(repairGrant.slots());
         repairWorkspace.slots().stream().filter(slot -> groups.contains(slot.dependencyGroupId()))
                 .forEach(slot -> slots.add(slot.slotId()));
         return slots;
@@ -1999,6 +2108,8 @@ public final class CanonicalRefinementSession {
             return;
         }
         repairWorkspace = workspace;
+        repairGrant = null;
+        rejectedRepairCandidates.clear();
         requestedRepairContext.clear();
         repairSlotsStaged += workspace.slots().size();
         repairSlotsPreserved += (int) workspace.slots().stream()
@@ -2069,6 +2180,45 @@ public final class CanonicalRefinementSession {
             return;
         }
         if (repairArtifact.equals("deal")) completeDealRepair(result);
+        else completeDealUiRepair(result);
+    }
+
+    private void applyRepairTransaction(CanonicalJson.Obj arguments) {
+        if (repairWorkspace == null || repairGrant == null) throw new IllegalStateException("No negotiated repair grant");
+        var patches = new ArrayList<SlotPatch>();
+        for (var value : CompilerProtocolJson.requireArray(field(arguments, "patches"), "patches").items()) {
+            var patch = CompilerProtocolJson.requireObject(value, "patch");
+            var payload = new LinkedHashMap<String, String>();
+            CompilerProtocolJson.requireObject(field(patch, "payload"), "payload").entries().forEach(e -> {
+                if (e.value() instanceof CanonicalJson.Str s) payload.put(e.key(), s.value());
+                else if (e.value() instanceof CanonicalJson.Int n) payload.put(e.key(), Long.toString(n.value()));
+                else throw new IllegalArgumentException("Invalid repair payload field");
+            });
+            if (payload.containsKey("newParentId")) payload.put("newParentId", resolveAlias(payload.get("newParentId"), "U").value());
+            patches.add(new SlotPatch(string(patch, "slot"), payload));
+        }
+        var dependencies = new ArrayList<deal.compiler.RepairWorkspaceProtocol.Dependency>();
+        for (var value : CompilerProtocolJson.requireArray(field(arguments, "dependencies"), "dependencies").items()) {
+            var dependency = CompilerProtocolJson.requireObject(value, "dependency");
+            dependencies.add(new deal.compiler.RepairWorkspaceProtocol.Dependency(string(dependency, "obligation"), string(dependency, "declaration")));
+        }
+        var candidatePayloads = repairWorkspace.slots().stream().map(s -> patches.stream().filter(p -> p.slotId().equals(s.slotId()))
+                .findFirst().map(SlotPatch::payload).orElse(s.payload())).toList();
+        String candidate = DealCompilerWorkspace.digest(CompilerProtocolJson.encode(List.of(candidatePayloads,
+                dependencies.stream().map(RepairWorkspaceProtocol.Dependency::declaration).sorted().toList())));
+        if (!rejectedRepairCandidates.add(candidate)) { fail("SC1002", "Repair repeated a rejected transaction"); return; }
+        if (!repairArtifact.equals("deal") && !dependencies.isEmpty()) throw new IllegalArgumentException("UI dependency insertion is not granted");
+        var result = repairArtifact.equals("deal")
+                ? CanonicalCompiler.applyDealRepairTransaction(deal, repairWorkspace, repairGrant, patches, dependencies)
+                : CanonicalCompiler.applyDealUiRepairTransaction(deal, dealUi, pack, packSpecifier, repairWorkspace, repairGrant, patches);
+        repairSlotPatches += patches.size();
+        addTranscript("apply_repair_transaction", Map.of("accepted", result.accepted(), "diagnostics", compactDiagnostics(result.diagnostics())));
+        repairGrant = null;
+        if (!result.accepted()) {
+            repairWorkspace = result.workspace(); repairDiagnostics = result.diagnostics(); semanticRepairs++;
+            int count = repairArtifact.equals("deal") ? ++dealSemanticRepairs : ++dealUiSemanticRepairs;
+            if (count > maxSemanticRepairs) fail("SC1001", "Repair budget exhausted");
+        } else if (repairArtifact.equals("deal")) completeDealRepair(result);
         else completeDealUiRepair(result);
     }
 
