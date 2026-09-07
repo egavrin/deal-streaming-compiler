@@ -523,6 +523,14 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object(complete), "accepted"), "correct construction must commit a canonical pair: " + complete);
         check(stringField(object(complete), "deal").contains("state.count + 1"), "compiler must emit the expression");
         var constructor = new deal.ui.CanonicalConstruction(false);
+        String forward = constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("b", "block", Map.of("statements", List.of("r"))),
+                cc("r", "return", Map.of("value", "v")),
+                cc("v", "integer", Map.of("value", 7))), "result", "b"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(forward.equals("return 7;"), "construction dependency order must not matter");
+        expectRejected(() -> constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("x", "field", Map.of("object", "y", "name", "n")),
+                cc("y", "field", Map.of("object", "x", "name", "n"))), "result", "x"))), deal.compiler.DealConstruction.Kind.VALUE));
         expectRejected(() -> constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
                 cc("bad", "reference", Map.of("name", "state; return 5;"))), "result", "bad"))), deal.compiler.DealConstruction.Kind.VALUE));
         expectRejected(() -> constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(

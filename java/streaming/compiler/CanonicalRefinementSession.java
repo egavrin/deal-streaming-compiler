@@ -610,6 +610,8 @@ public final class CanonicalRefinementSession {
                             .map(value -> Map.of(
                                     "slot", value.slotId(),
                                     "status", value.status().name(),
+                                    "operation", value.operation(),
+                                    "payload", agentRepairPayload(value),
                                     "payloadFingerprint", value.payloadFingerprint()))
                             .toList()));
         }

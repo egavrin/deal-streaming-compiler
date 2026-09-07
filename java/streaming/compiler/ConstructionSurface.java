@@ -18,8 +18,9 @@ final class ConstructionSurface {
             Work only through compiler construction API calls, not source code. Source shown in read-only context
             is for inspection only. Never output code, expressions, signatures or declarations as strings.
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
-            operands are ids of earlier calls. These ids are temporary compiler value handles, not program variables.
-            Every fields[].value, including declareRecord default values, must name an earlier VALUE call id.
+            operands are ids of calls in the same batch. Order is irrelevant; cycles are rejected.
+            These ids are temporary compiler value handles, not program variables or inspected symbol/node IDs.
+            Every fields[].value, including declareRecord default values, must name a VALUE call id in this batch.
             For a zero default, first issue integer with id zero and value 0, then use value zero in the field.
             Do not use the string 0 as an operand unless an earlier call actually has id 0.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
@@ -28,6 +29,8 @@ final class ConstructionSurface {
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
             In transaction arguments, all declaration/body/source/expression fields contain result handles, NOT code.
             Supporting declarations are declaration handles. Body slots need block or uiBody handles.
+            An initialState body must contain a return statement for a record matching the proposed AppState.
+            During repair, preservedSlots.payload describes staged changes; it supersedes the committed index.
             For Deal UI, component names come from the supplied pack. fields bind named properties to value handles;
             children are earlier UI handles. action binds a nominal action to named value handles. forEach binds one
             item with a typed collection and key; when creates a conditional subtree. uiBody groups UI children.
