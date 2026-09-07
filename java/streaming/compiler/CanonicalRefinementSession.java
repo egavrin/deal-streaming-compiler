@@ -1582,7 +1582,7 @@ public final class CanonicalRefinementSession {
                     "target", module, "declaration", string(pair, "handlerDeclaration")));
         }
         applyDeal(CompilerProtocolJson.requireObject(CompilerProtocolJson.decode(CompilerProtocolJson.encode(
-                Map.of("operations", operations, "final", booleanField(arguments, "final")))), "DEAL batch"));
+                Map.of("operations", operations.stream().distinct().toList(), "final", booleanField(arguments, "final")))), "DEAL batch"));
     }
 
     private void appendDealBehavior(CanonicalJson.Obj arguments) {

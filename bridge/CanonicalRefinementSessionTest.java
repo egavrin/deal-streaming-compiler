@@ -474,6 +474,15 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        try {
+            new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                    "calls", List.of(cc("n", "integer", Map.of("value", 1)),
+                            cc("f", "declareFunction", Map.of("name", "f", "parameters", List.of(), "returns", "int", "body", "n"))),
+                    "result", "f"))), deal.compiler.DealConstruction.Kind.DECLARATION);
+            throw new AssertionError("a value is not a function body");
+        } catch (deal.compiler.DealConstruction.Failure failure) {
+            check(failure.ownerId.equals("f"), "repair must target the consumer, not corrupt a shared value");
+        }
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         String request = session.nextRequestJson();
         check(toolNames(request).equals(List.of("construct_apply_deal_batch")), "one source-free batch must replace bootstrap rounds");
@@ -531,6 +540,14 @@ public final class CanonicalRefinementSessionTest {
                 CompilerProtocolJson.encode(CompilerProtocolJson.field(object(ui), "revision"))), "constructor repair must preserve every sibling and original transaction argument");
         check(!toolNames(ui).contains("finish_deal"), "final batch must transition without a completion round");
         check(toolNames(ui).contains("construct_apply_deal_ui_changes"), "UI must have no source fallback");
+        var sharedDeclarationSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
+        sharedDeclarationSession.nextRequestJson();
+        var sharedArguments = new java.util.LinkedHashMap<String, Object>(batchArguments);
+        sharedArguments.put("supportingDeclarations", List.of("actionType", "handler"));
+        var sharedCalls = new java.util.ArrayList<Map<String, Object>>(foundation);
+        sharedCalls.addAll(behavior);
+        String sharedResult = sharedDeclarationSession.acceptToolCallJson("construct_apply_deal_batch", construction(sharedCalls, sharedArguments));
+        check(toolNames(sharedResult).contains("construct_apply_deal_ui_changes"), "shared declaration handles must be installed once, not trigger duplicate-symbol repair");
         check(stringField(object(ui), "reasoningEffort").equals("none"), "UI reasoning must remain independent");
         var uiInput = object(stringField(object(ui), "input"));
         var packContract = CompilerProtocolJson.requireObject(CompilerProtocolJson.field(uiInput, "componentPack"), "componentPack");
