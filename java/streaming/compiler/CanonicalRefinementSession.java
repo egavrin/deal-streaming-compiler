@@ -30,15 +30,28 @@ import java.nio.charset.StandardCharsets;
 
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v9";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v10";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
     private static final int MAX_BOOTSTRAP_DECLARATION_CHARS = 4_000;
     private static final int MAX_INITIAL_STATE_BODY_CHARS = 6_000;
-    private static final List<String> HOST_CAPABILITIES = List.of(
-            "clock.minute", "clock.frame", "pointer", "keyboard", "storage.private",
-            "notifications", "camera.capture", "vision.ocr", "health.read", "focus.control");
+    private List<String> hostCapabilities() {
+        return inspection.componentPack().components().stream()
+                .flatMap(component -> component.capabilities().stream())
+                .filter(capability -> capability.startsWith("host."))
+                .map(capability -> capability.substring(5)).distinct().sorted().toList();
+    }
+
+    private boolean hostContractReady() {
+        return CanonicalCompiler.inspectHostRequirements(
+                inspection.deal().appInterface(), inspection.componentPack()).stream()
+                .allMatch(CanonicalCompiler.HostRequirement::ready);
+    }
+
+    private Map<String, Object> hostCapabilityItemSchema() {
+        return hostCapabilities().isEmpty() ? Map.of("type", "string") : enumSchema(hostCapabilities());
+    }
     private static final String REFINEMENT_SYSTEM_PROMPT = """
             You modernize one canonical DEAL application through a compact compiler agent surface.
             DEAL owns state and behavior. Deal UI owns declarative presentation. Inspect a short
@@ -528,6 +541,11 @@ public final class CanonicalRefinementSession {
         context.put("packVersion", inspection.packVersion());
         context.put("packDigest", inspection.packDigest());
         if (generation && forcedArtifact.equals("deal")) {
+            context.put("hostRequirements", CanonicalCompiler.inspectHostRequirements(
+                    inspection.deal().appInterface(), inspection.componentPack()));
+            context.put("availableHostComponents", inspection.componentPack().components().stream()
+                    .filter(component -> component.capabilities().stream().anyMatch(value -> value.startsWith("host.")))
+                    .toList());
             context.put("consumerContract", inspection.componentPack().components().stream()
                     .filter(component -> component.properties().stream().anyMatch(property ->
                             property.type().equals("int") || property.type().equals("number"))
@@ -620,8 +638,8 @@ public final class CanonicalRefinementSession {
                             "appStateDeclaration", Map.of("type", "string", "maxLength", MAX_BOOTSTRAP_DECLARATION_CHARS, "description",
                                     "Complete export class AppState declaration. Use int, not number, for integral fields and defaults"),
                             "capabilities", Map.of(
-                                    "type", "array", "uniqueItems", true, "maxItems", HOST_CAPABILITIES.size(),
-                                    "items", enumSchema(HOST_CAPABILITIES),
+                                    "type", "array", "uniqueItems", true, "maxItems", hostCapabilities().size(),
+                                    "items", hostCapabilityItemSchema(),
                                     "description", "Complete set of host capabilities required by this application"),
                             "initialStateBody", Map.of("type", "string", "maxLength", MAX_INITIAL_STATE_BODY_CHARS, "description",
                                     "Statements only; omit signature and outer braces. Return one complete AppState value on every path; initialState has no state parameter. "
@@ -639,7 +657,7 @@ public final class CanonicalRefinementSession {
             result.add(dealActionHandlerTool());
             result.add(dealSupportingDeclarationTool());
         }
-        if (generation && generationStage().equals("declarations")
+        if (generation && generationStage().equals("declarations") && hostContractReady()
                 && !inspection.deal().appInterface().actions().isEmpty()) {
             List<String> actionNames = inspection.deal().appInterface().actions().stream()
                     .map(CompilerProtocol.TypeSnapshot::name)
@@ -759,8 +777,8 @@ public final class CanonicalRefinementSession {
                         "capabilities", Map.of(
                                 "type", "array",
                                 "uniqueItems", true,
-                                "maxItems", HOST_CAPABILITIES.size(),
-                                "items", enumSchema(HOST_CAPABILITIES),
+                                "maxItems", hostCapabilities().size(),
+                                "items", hostCapabilityItemSchema(),
                                 "description", "Complete host capability set after this change. Preserve existing entries and add only capabilities required by the instruction"),
                         "final", Map.of(
                                 "type", "boolean", "const", true,
@@ -992,8 +1010,8 @@ public final class CanonicalRefinementSession {
                 case DealCompilerWorkspace.SET_CAPABILITIES -> Map.of(
                         "capabilities", Map.of(
                                 "type", "array", "uniqueItems", true,
-                                "maxItems", HOST_CAPABILITIES.size(),
-                                "items", enumSchema(HOST_CAPABILITIES)));
+                                "maxItems", hostCapabilities().size(),
+                                "items", hostCapabilityItemSchema()));
                 default -> Map.of();
             };
             addIfAllowed(operations, grant.operation(), grant.targetId(), extra);
@@ -1596,6 +1614,11 @@ public final class CanonicalRefinementSession {
     }
 
     private void finishDeal(CanonicalJson.Obj arguments) {
+        if (!hostContractReady()) {
+            throw new IllegalArgumentException("DEAL host contract is not ready: "
+                    + CompilerProtocolJson.encode(CanonicalCompiler.inspectHostRequirements(
+                            inspection.deal().appInterface(), inspection.componentPack())));
+        }
         if (!generation || !generationStage().equals("declarations") || !dealIsValid()) {
             throw new IllegalArgumentException("finish_deal requires valid generated DEAL after bootstrap");
         }

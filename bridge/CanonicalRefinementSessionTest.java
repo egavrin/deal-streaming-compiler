@@ -23,9 +23,11 @@ public final class CanonicalRefinementSessionTest {
             export class ColumnProps {}
             export class TextProps { value: string; }
             export class ButtonProps { text: string; onClick?: Action; }
+            export class ClockProps { onTick: Action; }
             export component Column(props: ColumnProps): View { children optional; }
             export component Text(props: TextProps): View;
             export component Button(props: ButtonProps): View { event onClick; }
+            export component Clock(props: ClockProps): View { event onTick(payload: int); capability "host.clock.frame"; }
             """;
     private static final String UI = """
             import * as app from "./app.deal";
@@ -42,6 +44,7 @@ public final class CanonicalRefinementSessionTest {
     private CanonicalRefinementSessionTest() {}
 
     public static void main(String[] args) {
+        greenfieldHostReadinessGatesUi();
         diagnosticCompactionPreservesLocationsAndEvidence();
         inspectChangeUnlocksCompilerOwnedCone();
         stateSchemaEvolutionUsesOneAtomicTool();
@@ -434,6 +437,30 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "greenfield canonical app must complete");
         check(stringField(object, "deal").contains("IncrementAction"), "generated DEAL must be retained");
         check(stringField(object, "dealUi").contains("ui.Button"), "generated Deal UI must be retained");
+    }
+
+    private static void greenfieldHostReadinessGatesUi() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive timer", 12, 3);
+        String initial = session.nextRequestJson();
+        check(!initial.contains("storage.private") && !initial.contains("camera.capture"),
+                "capability schema must come from the actual pack");
+        session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of("clock.frame"),
+                "appStateDeclaration", "export class AppState { count: int = 0; }",
+                "initialStateBody", "return {count: 0};")));
+        String missing = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(), "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class LabelAction { text: string = \"\"; }",
+                        "handlerDeclaration", "// @ui-update\nexport function label(state: AppState, action: LabelAction): AppState { return {count: state.count}; }")),
+                "final", false)));
+        check(!toolNames(missing).contains("finish_deal") && missing.contains("missingEvents"),
+                "unconstructible host binding must stay in DEAL and expose compiler facts");
+        String ready = session.acceptToolCallJson("append_deal_behavior", CompilerProtocolJson.encode(Map.of(
+                "supportingDeclarations", List.of(), "actionHandlers", List.of(Map.of(
+                        "actionDeclaration", "export class TickAction { elapsed: int = 0; }",
+                        "handlerDeclaration", "// @ui-update\nexport function tick(state: AppState, action: TickAction): AppState { return {count: state.count + action.elapsed}; }")),
+                "final", false)));
+        check(toolNames(ready).contains("finish_deal"), "adding compatible handler must unblock completion");
     }
 
     private static void greenfieldFinalFalseKeepsBuildingDeal() {
