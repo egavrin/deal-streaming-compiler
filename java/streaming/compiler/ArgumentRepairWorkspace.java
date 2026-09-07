@@ -51,6 +51,11 @@ final class ArgumentRepairWorkspace {
         input.put("actual", issue.actual());
         input.put("operation", issue.remove() ? "removeUnexpectedProperty" : "replaceArgument");
         input.put("ticket", ticket());
+        var invalid = locate(candidate, schema, List.of());
+        if (invalid != null) {
+            input.put("diagnostic", Map.of("path", invalid.path(), "actual", invalid.actual(),
+                    "expected", invalid.schema(), "operation", invalid.remove() ? "removeUnexpectedProperty" : "replaceInvalidValue"));
+        }
         if (constructorSlot()) input.put("scope", "Replace this constructor, retaining its id. You may add up to eight NEW dependency constructors. Existing sibling constructors are immutable.");
         input.put("parent", constructorSlot() ? Map.of("collection", "calls")
                 : at(candidate, issue.path().subList(0, issue.path().size() - 1)));
@@ -76,6 +81,8 @@ final class ArgumentRepairWorkspace {
                 + "Return its complete replacement with the SAME id, plus dependencies: an array of NEW constructors (empty when unnecessary). "
                 + "Do not replace unrelated existing constructors. Use index+assign for indexed writes, never array indexes inside path. "
                 + "The supplied constructor schemas are authoritative. Handle operands are plain ids without embedded quotes. "
+                + "Read diagnostic.path, actual and expected: fix that schema violation in replacement. "
+                + "An operand object containing id/op is NOT a reference: use its existing handle id string, or add a NEW dependency and reference its id. "
                 + "No raw source code. Fix all schema defects in this constructor, not only the first reported field.";
         String encodedInput = encode(input);
         var tools = List.of(tool());
@@ -142,9 +149,25 @@ final class ArgumentRepairWorkspace {
             var owner = at(value, path);
             if (owner instanceof CanonicalJson.Obj obj && optionalField(obj, "id") instanceof CanonicalJson.Str
                     && optionalField(obj, "op") instanceof CanonicalJson.Str)
-                return new Issue(path, callSchema(), owner, false);
+                return new Issue(path, ownerSchema(obj), owner, false);
         }
         return found;
+    }
+
+    private Map<?, ?> ownerSchema(CanonicalJson.Obj owner) {
+        if (callSchema().get("anyOf") instanceof List<?> alternatives) {
+            for (Object raw : alternatives) {
+                var alternative = (Map<?, ?>) raw;
+                if (!(alternative.get("properties") instanceof Map<?, ?> properties)) continue;
+                if (!(properties.get("op") instanceof Map<?, ?> op)
+                        || !encode(op.get("const")).equals(encode(field(owner, "op")))) continue;
+                var fixed = new LinkedHashMap<String, Object>();
+                properties.forEach((key, value) -> fixed.put((String) key, value));
+                fixed.put("id", Map.of("type", "string", "const", field(owner, "id")));
+                return deal.compiler.DealConstruction.objectSchema(fixed);
+            }
+        }
+        return callSchema();
     }
 
     private static void requireLocal(Issue issue) {
