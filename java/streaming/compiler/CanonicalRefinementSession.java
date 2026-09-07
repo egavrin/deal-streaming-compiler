@@ -443,7 +443,7 @@ public final class CanonicalRefinementSession {
             var arguments = CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments");
             if (argumentRepair != null) {
                 if (!name.equals("patch_tool_argument")) throw new IllegalArgumentException("Only patch_tool_argument is granted");
-                argumentRepair.validatePatch(arguments);
+                argumentRepair.validateTicket(arguments);
             } else if (argumentWorkspace(name, arguments) == null) validateIssuedCall(name, arguments);
         }
         return values;
@@ -466,10 +466,16 @@ public final class CanonicalRefinementSession {
         String name = string(call, "name");
         var arguments = CompilerProtocolJson.requireObject(field(call, "arguments"), "tool arguments");
         if (argumentRepair != null) {
-            try { argumentRepair.patch(arguments); }
-            catch (IllegalArgumentException failure) { fail("SC1020", failure.getMessage()); return resultJson(); }
             argumentRepairRounds++;
             lastIssuedRequest.put("argumentRepairRounds", argumentRepairRounds);
+            try { argumentRepair.validatePatch(arguments); }
+            catch (IllegalArgumentException failure) {
+                try { argumentRepair.rejectPatch(arguments, failure.getMessage()); }
+                catch (IllegalArgumentException exhausted) { fail("SC1020", exhausted.getMessage()); return resultJson(); }
+                return nextRequestJson();
+            }
+            try { argumentRepair.patch(arguments); }
+            catch (IllegalArgumentException failure) { fail("SC1020", failure.getMessage()); return resultJson(); }
             if (!argumentRepair.complete()) return nextRequestJson();
             String originalTool = argumentRepair.toolName;
             var repaired = argumentRepair.candidate();

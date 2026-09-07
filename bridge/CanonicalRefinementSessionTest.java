@@ -157,6 +157,13 @@ public final class CanonicalRefinementSessionTest {
                 cc("second", "integer", Map.of("value", "bad")),
                 cc("preserved", "integer", Map.of("value", 99))))));
         var group = new ArgumentRepairWorkspace("construct_test", constructorSchema, groupCandidate);
+        var rejectedGroup = new ArgumentRepairWorkspace("construct_test", constructorSchema, groupCandidate);
+        var badGroupPatch = object(CompilerProtocolJson.encode(Map.of("ticket", rejectedGroup.ticket(), "replacement", false, "dependencies", List.of())));
+        rejectedGroup.rejectPatch(badGroupPatch, "replacement requires constructor slots");
+        check(rejectedGroup.request(Map.of()).contains("rejectedPatch"), "rejected patch is available to the next repair request");
+        expectRejected(() -> rejectedGroup.rejectPatch(badGroupPatch, "replacement requires constructor slots"));
+        check(CompilerProtocolJson.encode(rejectedGroup.candidate()).equals(CompilerProtocolJson.encode(groupCandidate)),
+                "repeated invalid patch cannot mutate pending arguments");
         String groupInput = stringField(object(group.request(Map.of())), "input");
         check(groupInput.contains("repairSlots") && groupInput.contains("R2") && !groupInput.contains("\"value\":99"),
                 "grouped repair exposes only invalid constructor bodies");
@@ -719,6 +726,17 @@ public final class CanonicalRefinementSessionTest {
         var patchTool = CompilerProtocolJson.requireObject(field(grantedPatch, "parameters"), "parameters");
         var patchProps = CompilerProtocolJson.requireObject(field(patchTool, "properties"), "properties");
         String ticket = stringField(CompilerProtocolJson.requireObject(field(patchProps, "ticket"), "ticket"), "const");
+        var badPatch = Map.of("ticket", ticket, "replacement", cc("initialReturn", "return", Map.of("value", Map.of("emptyArray", true))), "dependencies", List.of());
+        String badPatchCalls = CompilerProtocolJson.encode(List.of(Map.of("name", "patch_tool_argument", "arguments", badPatch)));
+        check(argumentSession.validateToolCallsJson(badPatchCalls).contains("\"valid\":true"),
+                "parsed invalid repair is engine feedback, not a transport retry");
+        String rejectedPatchRequest = argumentSession.acceptToolCallsJson(badPatchCalls);
+        check(toolNames(rejectedPatchRequest).equals(List.of("patch_tool_argument"))
+                && stringField(object(rejectedPatchRequest), "input").contains("patchDiagnostic"),
+                "invalid patch remains scoped and reports its exact rejection");
+        check(field(object(beforeArguments), "revision").equals(field(object(rejectedPatchRequest), "revision"))
+                && CompilerProtocolJson.intField(object(rejectedPatchRequest), "semanticRepairs") == 0,
+                "rejected argument patch cannot mutate revision or consume semantic repairs");
         String afterArguments = argumentSession.acceptToolCallJson("patch_tool_argument",
                 CompilerProtocolJson.encode(Map.of("ticket", ticket, "replacement", cc("initialReturn", "return", Map.of("value", "initialRecord")), "dependencies", List.of())));
         check(toolNames(afterArguments).contains("construct_apply_deal_ui_changes"), "repaired original batch compiles and advances to UI");

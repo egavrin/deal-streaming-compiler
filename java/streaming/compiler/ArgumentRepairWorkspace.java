@@ -15,6 +15,25 @@ final class ArgumentRepairWorkspace {
     private Issue issue;
     private int rounds;
     private int unchanged;
+    private String rejectedPatch;
+    private String rejectedDiagnostic;
+    private int repeatedRejection;
+
+    void validateTicket(CanonicalJson.Obj patch) {
+        if (!ticket().equals(stringField(patch, "ticket")))
+            throw new IllegalArgumentException("Stale argument repair ticket");
+    }
+
+    void rejectPatch(CanonicalJson.Obj patch, String diagnostic) {
+        validateTicket(patch);
+        String encoded = encode(patch);
+        repeatedRejection = encoded.equals(rejectedPatch) ? repeatedRejection + 1 : 1;
+        rejectedPatch = encoded;
+        rejectedDiagnostic = diagnostic;
+        if (++rounds > 8) throw new IllegalArgumentException("Argument repair budget exhausted");
+        if (repeatedRejection >= 2)
+            throw new IllegalArgumentException("Argument repair repeated the same invalid patch without progress: " + diagnostic);
+    }
 
     ArgumentRepairWorkspace(String toolName, Map<?, ?> schema, CanonicalJson.Obj candidate) {
         this.toolName = toolName;
@@ -56,6 +75,10 @@ final class ArgumentRepairWorkspace {
         input.put("actual", issue.actual());
         input.put("operation", issue.remove() ? "removeUnexpectedProperty" : "replaceArgument");
         input.put("ticket", ticket());
+        if (rejectedPatch != null) {
+            input.put("rejectedPatch", decode(rejectedPatch));
+            input.put("patchDiagnostic", rejectedDiagnostic);
+        }
         var invalid = locate(candidate, schema, List.of());
         if (invalid != null) {
             input.put("diagnostic", Map.of("path", invalid.path(), "actual", invalid.actual(),
@@ -103,6 +126,7 @@ final class ArgumentRepairWorkspace {
                 + "An operand object containing id/op is NOT a reference: use its existing handle id string, or add a NEW dependency and reference its id. "
                 + "No raw source code. Fix all schema defects in this constructor, not only the first reported field.";
         if (slots.size() > 1) instructions += " There are multiple invalid slots. replacement is an object keyed by R1, R2, etc., with one complete constructor per issued slot. Fix the group in ONE call. Dependencies are shared across the group.";
+        if (rejectedPatch != null) instructions += " The previous patch was NOT applied. Read rejectedPatch and patchDiagnostic; correct that error before resubmitting. Repeating the same rejected patch ends repair.";
         String encodedInput = encode(input);
         var tools = List.of(tool());
         String encodedTools = encode(tools);
@@ -147,6 +171,9 @@ final class ArgumentRepairWorkspace {
         if (nextIssue != null) requireLocal(nextIssue);
         candidate = next;
         issue = nextIssue;
+        rejectedPatch = null;
+        rejectedDiagnostic = null;
+        repeatedRejection = 0;
     }
 
     void validatePatch(CanonicalJson.Obj patch) {
