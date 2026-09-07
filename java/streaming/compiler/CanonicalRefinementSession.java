@@ -357,7 +357,8 @@ public final class CanonicalRefinementSession {
     }
 
     private String instructions() {
-        if (constructionApi) return ConstructionSurface.INSTRUCTIONS;
+        if (constructionApi) return (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
+                ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS;
         if (generation) {
             return forcedArtifact.equals("dealui")
                     ? DEAL_UI_GENERATION_SYSTEM_PROMPT

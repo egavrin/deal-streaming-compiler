@@ -12,6 +12,35 @@ import static deal.compiler.CompilerProtocolJson.*;
 
 /** Adapts authorized semantic transactions to compiler construction calls, never source strings. */
 final class ConstructionSurface {
+    static final String UI_INSTRUCTIONS = """
+            You are building ONLY Deal UI through the compiler API. DEAL is already compiled and frozen.
+            Do not create state, initializers, records, functions or handlers. Bind existing actions from deal.interface.
+            You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
+            Tool arguments have two fields: calls (a flat compiler constructor batch) and arguments (the granted edit).
+            Every call has an id and op. Operand strings name ids in this batch, never source expressions.
+            Order is irrelevant. Do not reuse inspected symbol/node ids as construction operands.
+            For text data use text; for numbers use integer; for booleans use boolean.
+            reference(name=state) plus field(object=<state id>,name=<field>) binds state data.
+            reference(name=ui) plus field binds an exact UI constant from the pack if its property needs one.
+            action(name=<existing action type>,fields=[...]) creates an Action value, NOT a class declaration.
+            component(name=<exact pack component>,fields=[{name:<property>,value:<VALUE id>}],children=[UI ids])
+            constructs a UI node. Children is always present, even if empty. Use only declared properties.
+            uiBody(children=[UI ids]) produces the result handle for replaceViewBody or a repair body slot.
+            A subtree replacement uses a single component/when/forEach result instead of uiBody.
+            when and forEach build conditional and dynamic children. No arrays, indexing, assignment or arbitrary calls.
+            Minimal constructor example (API usage only, not an application template):
+            {"calls":[{"id":"label","op":"text","value":"Ready"},
+            {"id":"node","op":"component","name":"Text","fields":[{"name":"value","value":"label"}],"children":[]},
+            {"id":"root","op":"uiBody","children":["node"]}],
+            "arguments":{"operations":[{"operation":"replaceViewBody","body":"root"}],"final":true}}
+            Use the actually granted operation and target schema, not invented setRoot operations.
+            Build the requested UI, not the example. Display numeric state through IntText/IntStat, not Text.
+            Preserve AppTheme as a sibling configuration node; it has no children. Layout containers own children.
+            Use compact defaults: omit optional properties unless needed. Never fill unrelated properties with a label.
+            Respect component types, available state paths and nominal actions. Compiler diagnostics are authoritative.
+            During repair, change only the rejected slot; preservedSlots.payload is staged read-only context.
+            No source-code escape hatch is available. Submit compiler construction calls only.
+            """;
     private static final Set<String> CODE_FIELDS = Set.of("appStateDeclaration", "initialStateBody", "actionDeclaration",
             "handlerDeclaration", "declaration", "body", "source", "expression", "supportingDeclarations");
     static final String INSTRUCTIONS = """
