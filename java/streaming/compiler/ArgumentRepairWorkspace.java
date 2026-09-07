@@ -91,6 +91,7 @@ final class ArgumentRepairWorkspace {
         result.put("instructions", instructions);
         result.put("input", encodedInput);
         result.put("tools", tools);
+        result.put("maxOutputTokens", 8192);
         result.put("argumentRepairRound", rounds);
         result.put("surfaceDigest", DealCompilerWorkspace.digest(encodedInput + encodedTools));
         int size = (encodedInput + encodedTools + instructions).getBytes(StandardCharsets.UTF_8).length;
@@ -101,7 +102,7 @@ final class ArgumentRepairWorkspace {
     }
 
     void patch(CanonicalJson.Obj patch) {
-        CanonicalRefinementSession.validateSchema(patch, (Map<?, ?>) tool().get("parameters"));
+        validatePatch(patch);
         if (++rounds > 8) throw new IllegalArgumentException("Argument repair budget exhausted");
         var next = (CanonicalJson.Obj) replace(candidate, issue.path(), 0,
                 issue.remove() ? CanonicalJson.Null.INSTANCE : field(patch, "replacement"), issue.remove());
@@ -130,6 +131,15 @@ final class ArgumentRepairWorkspace {
         if (nextIssue != null) requireLocal(nextIssue);
         candidate = next;
         issue = nextIssue;
+    }
+
+    void validatePatch(CanonicalJson.Obj patch) {
+        var expected = (Map<?, ?>) tool().get("parameters");
+        var invalid = locate(patch, expected, List.of());
+        if (invalid != null) throw new IllegalArgumentException("Invalid argument patch: " + encode(Map.of(
+                "path", invalid.path(), "actual", invalid.actual(), "expected", invalid.schema(),
+                "operation", invalid.remove() ? "removeUnexpectedProperty" : "replaceInvalidValue")));
+        CanonicalRefinementSession.validateSchema(patch, expected);
     }
 
     private Map<?, ?> callSchema() {

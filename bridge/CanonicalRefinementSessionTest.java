@@ -689,10 +689,14 @@ public final class CanonicalRefinementSessionTest {
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
         var argumentSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
         String beforeArguments = argumentSession.nextRequestJson();
+        check(CompilerProtocolJson.intField(object(beforeArguments), "maxOutputTokens") == 32768,
+                "complete constructor batches must not inherit a small source-body transport limit");
         var invalidArguments = new java.util.ArrayList<Map<String, Object>>(batch);
         invalidArguments.set(4, cc("initialReturn", "return", Map.of("value", Map.of("id", "initialRecord"))));
         String pendingArguments = argumentSession.acceptToolCallJson("construct_apply_deal_batch", construction(invalidArguments, batchArguments));
         check(toolNames(pendingArguments).equals(List.of("patch_tool_argument")), "schema failure narrows to one argument instead of replaying batch");
+        check(CompilerProtocolJson.intField(object(pendingArguments), "maxOutputTokens") == 8192,
+                "local argument repair retains its own smaller output ceiling");
         check(CompilerProtocolJson.intField(object(pendingArguments), "semanticRepairs") == 0,
                 "argument staging consumes no semantic repair");
         check(field(object(beforeArguments), "revision").equals(field(object(pendingArguments), "revision")),

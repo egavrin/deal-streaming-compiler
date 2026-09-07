@@ -376,6 +376,8 @@ public final class CanonicalRefinementSession {
         request.put("reasoningEffort", forcedArtifact.equals("dealui") ? uiReasoningEffort : dealReasoningEffort);
         request.put("input", input);
         request.put("tools", tools);
+        request.put("maxOutputTokens", tools.stream().anyMatch(tool -> "construct_apply_deal_batch".equals(tool.get("name")))
+                ? 32768 : tools.stream().anyMatch(tool -> "construct_apply_deal_ui_changes".equals(tool.get("name"))) ? 16384 : 8192);
         request.put("round", rounds + 1);
         request.put("semanticRepairs", semanticRepairs);
         request.put("argumentRepairRounds", argumentRepairRounds);
@@ -441,7 +443,7 @@ public final class CanonicalRefinementSession {
             var arguments = CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments");
             if (argumentRepair != null) {
                 if (!name.equals("patch_tool_argument")) throw new IllegalArgumentException("Only patch_tool_argument is granted");
-                validateSchema(arguments, (Map<?, ?>) argumentRepair.tool().get("parameters"));
+                argumentRepair.validatePatch(arguments);
             } else if (argumentWorkspace(name, arguments) == null) validateIssuedCall(name, arguments);
         }
         return values;
