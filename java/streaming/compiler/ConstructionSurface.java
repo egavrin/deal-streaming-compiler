@@ -76,6 +76,7 @@ final class ConstructionSurface {
             Compact inline operands are preferred: {"text":"Ready"} for literal text including empty text,
             {"path":["state","count"]} for a field, {"path":["action","value"]} for action data.
             These objects replace redundant text/path calls and can be used in fields[].value or binary operands.
+            Tagged scalars {"integer":1} and {"boolean":true} are also supported; bare 1 and true are shorter.
             Prefer inline numbers/booleans over separate calls. Display strings use {"text":"..."} or a text constructor;
             strings in operand positions are always handles, never expressions or literals.
             The empty string "" is also accepted as an empty text value because it cannot name a handle.

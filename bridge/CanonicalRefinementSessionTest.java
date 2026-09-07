@@ -522,6 +522,9 @@ public final class CanonicalRefinementSessionTest {
         String emptyText = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("r", "return", Map.of("value", ""))), "result", "r"))), deal.compiler.DealConstruction.Kind.STATEMENT);
         check(emptyText.equals("return \"\";"), "empty text is unambiguous because handle ids cannot be empty");
+        String taggedInteger = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("r", "return", Map.of("value", Map.of("integer", 1500)))), "result", "r"))), deal.compiler.DealConstruction.Kind.STATEMENT);
+        check(taggedInteger.equals("return 1500;"), "tagged scalar must project the same literal as its constructor");
         String demanded = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("unused", "return", Map.of("value", "unresolved")),
                         cc("result", "return", Map.of("value", 7))), "result", "result"))), deal.compiler.DealConstruction.Kind.STATEMENT);
