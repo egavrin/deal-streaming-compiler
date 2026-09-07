@@ -66,8 +66,10 @@ final class ConstructionSurface {
             An initialState body must contain a return statement for a record matching the proposed AppState.
             During repair, preservedSlots.payload describes staged changes; it supersedes the committed index.
             Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
-            Do not predeclare action types in the foundation batch. Declare each together with its handler
-            in the behavior batch; supportingDeclarations are data records/helpers, not future action types.
+            Build state, initialState and all action-handler pairs in ONE construct_apply_deal_batch call.
+            Set arguments.final=true when requested behavior is complete; do not reserve a separate finish round.
+            Use final=false only when another batch is necessary. supportingDeclarations are data records/helpers;
+            action types belong in actionHandlers together with their handlers in the same batch.
             Its handler MUST use declareUpdate, parameters state:AppState and action:YourActionType, returns:AppState.
             Read state fields through reference(name=state) and field(object=<state handle>, name=<field name>).
             State and action are borrowed: never assign to them. Construct and return replacement state instead,

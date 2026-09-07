@@ -39,7 +39,7 @@ public final class CanonicalRefinementSession {
         constructionApi = true;
         return this;
     }
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v10";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v11";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -341,10 +341,12 @@ public final class CanonicalRefinementSession {
         request.put("surfaceDigest", surfaceDigest);
         int inputBytes = input.getBytes(StandardCharsets.UTF_8).length;
         int toolBytes = encodedTools.getBytes(StandardCharsets.UTF_8).length;
+        int instructionBytes = instructions().getBytes(StandardCharsets.UTF_8).length;
         request.put("surfaceMetrics", Map.of(
                 "inputBytes", inputBytes,
                 "toolSchemaBytes", toolBytes,
-                "approxInputTokens", (inputBytes + toolBytes + 3) / 4));
+                "instructionBytes", instructionBytes,
+                "approxInputTokens", (inputBytes + toolBytes + instructionBytes + 3) / 4));
         request.put("revision", Map.of(
                 "deal", inspection.deal().sourceDigest(),
                 "dealUi", inspection.dealUi() == null ? "" : inspection.dealUi().sourceDigest()));
@@ -502,6 +504,7 @@ public final class CanonicalRefinementSession {
                                 .map(value -> Map.of("name", value.name(), "fields", value.fields())).toList());
             }
             case "apply_deal_foundation" -> applyDealFoundation(arguments);
+            case "apply_deal_batch" -> applyDealBatch(arguments);
             case "append_deal_behavior" -> appendDealBehavior(arguments);
             case "evolve_deal_state" -> evolveDealState(arguments);
             case "add_deal_action_handler" -> addDealActionHandler(arguments);
@@ -659,7 +662,17 @@ public final class CanonicalRefinementSession {
             result.addAll(inspectChangeTools());
         }
         List<Map<String, Object>> dealOperations = repairMustFinishDeal ? List.of() : dealOperationSchemas();
-        if (generation && generationStage().equals("bootstrap") && foundationReady()) {
+        if (constructionApi && generation && generationStage().equals("bootstrap") && foundationReady()) {
+            result.add(tool("apply_deal_batch",
+                    "Build the entire DEAL artifact atomically: state, initial state, supporting declarations and action-handler pairs. Set final=true when all requested behavior is supplied; no separate completion call is needed. All dependencies may be forward references within this batch.",
+                    objectSchema(Map.of(
+                            "supportingDeclarations", Map.of("type", "array", "items", Map.of("type", "string")),
+                            "appStateDeclaration", Map.of("type", "string"),
+                            "initialStateBody", Map.of("type", "string"),
+                            "capabilities", Map.of("type", "array", "uniqueItems", true, "items", hostCapabilityItemSchema()),
+                            "actionHandlers", Map.of("type", "array", "items", actionHandlerSchema()),
+                            "final", Map.of("type", "boolean", "description", "True when the supplied behavior is complete; false only when another batch is necessary")))));
+        } else if (generation && generationStage().equals("bootstrap") && foundationReady()) {
             result.add(tool("apply_deal_foundation",
                     "Atomically declare supporting record types and replace the two bootstrap units.",
                     objectSchema(Map.of(
@@ -754,17 +767,19 @@ public final class CanonicalRefinementSession {
         Map<String, Object> actionHandler = actionHandlerSchema();
         return tool(
                 "append_deal_behavior",
-                "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Completion is a separate compiler-owned finish_deal step after this bounded batch.",
+                constructionApi
+                        ? "Atomically append remaining action-handler pairs and helpers. Set final=true to transition directly to UI."
+                        : "Bootstrap is committed. Atomically append complete action-handler pairs and optional supporting helpers; never emit an action without its handler. Completion is a separate compiler-owned finish_deal step after this bounded batch.",
                 objectSchema(Map.of(
                         "supportingDeclarations", Map.of(
-                                "type", "array", "maxItems", MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
+                                "type", "array", "maxItems", constructionApi ? 512 : MAX_SUPPORTING_DECLARATIONS_PER_BATCH,
                                 "items", Map.of("type", "string", "description",
                                         "Exactly one complete unique helper function or field-only record class")),
                         "actionHandlers", Map.of(
                                 "type", "array", "minItems", 1,
-                                "maxItems", MAX_ACTION_HANDLERS_PER_BATCH,
+                                "maxItems", constructionApi ? 256 : MAX_ACTION_HANDLERS_PER_BATCH,
                                 "items", actionHandler),
-                        "final", Map.of(
+                        "final", constructionApi ? Map.of("type", "boolean") : Map.of(
                                 "type", "boolean",
                                 "const", false,
                                 "description", "Always false. The next compact surface audits request coverage before finish_deal"))));
@@ -1009,7 +1024,9 @@ public final class CanonicalRefinementSession {
 
     private String generationStageObjective() {
         return switch (generationStage()) {
-            case "bootstrap" -> "Inspect the module and both bootstrap units. In one transaction add supporting field-only record types, replace AppState, and replace initialState; continue with final=false.";
+            case "bootstrap" -> constructionApi
+                    ? "Build AppState, initialState, supporting types/helpers and all action-handler pairs in one compiler batch. Set final=true when requested behavior is complete to proceed directly to UI."
+                    : "Inspect the module and both bootstrap units. In one transaction add supporting field-only record types, replace AppState, and replace initialState; continue with final=false.";
             case "app-state" -> "Replace only the missing AppState declaration; do not add or redeclare it.";
             case "initial-state" -> "Replace only the missing initialState body; do not redeclare AppState.";
             case "declarations" -> "AppState and initialState are committed. Add only missing unique action, helper, and handler declarations. If existing behavior is complete, call finish_deal immediately.";
@@ -1435,13 +1452,42 @@ public final class CanonicalRefinementSession {
         applyDeal(transaction);
     }
 
+    private void applyDealBatch(CanonicalJson.Obj arguments) {
+        List<Map<String, Object>> operations = new ArrayList<>();
+        String module = alias(inspection.deal().moduleId());
+        grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
+        for (CanonicalJson.Value value : CompilerProtocolJson.requireArray(
+                field(arguments, "supportingDeclarations"), "supportingDeclarations").items()) {
+            if (!(value instanceof CanonicalJson.Str declaration))
+                throw new IllegalArgumentException("supportingDeclarations must contain declaration handles");
+            operations.add(Map.of("operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module, "declaration", declaration.value()));
+        }
+        operations.add(Map.of("operation", DealCompilerWorkspace.REPLACE_DECLARATION,
+                "target", symbolAlias("AppState"), "declaration", string(arguments, "appStateDeclaration")));
+        operations.add(Map.of("operation", DealCompilerWorkspace.REPLACE_FUNCTION_BODY,
+                "target", nodeAliases("initialState").get(0), "body", string(arguments, "initialStateBody")));
+        operations.add(Map.of("operation", DealCompilerWorkspace.SET_CAPABILITIES,
+                "target", module, "capabilities", stringArrayOr(arguments, "capabilities", List.of())));
+        for (CanonicalJson.Value value : CompilerProtocolJson.requireArray(
+                field(arguments, "actionHandlers"), "actionHandlers").items()) {
+            var pair = CompilerProtocolJson.requireObject(value, "action-handler pair");
+            operations.add(Map.of("operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module, "declaration", string(pair, "actionDeclaration")));
+            operations.add(Map.of("operation", DealCompilerWorkspace.ADD_DECLARATION,
+                    "target", module, "declaration", string(pair, "handlerDeclaration")));
+        }
+        applyDeal(CompilerProtocolJson.requireObject(CompilerProtocolJson.decode(CompilerProtocolJson.encode(
+                Map.of("operations", operations, "final", booleanField(arguments, "final")))), "DEAL batch"));
+    }
+
     private void appendDealBehavior(CanonicalJson.Obj arguments) {
         List<Map<String, Object>> operations = new ArrayList<>();
         String module = alias(inspection.deal().moduleId());
         grant(dealGrants, CanonicalCompiler.queryDealModule(deal).allowedOperations());
         CanonicalJson.Arr supporting = CompilerProtocolJson.requireArray(
                 field(arguments, "supportingDeclarations"), "supportingDeclarations");
-        if (supporting.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
+        if (!constructionApi && supporting.items().size() > MAX_SUPPORTING_DECLARATIONS_PER_BATCH) {
             rejectAgentSurface(
                     "append_deal_behavior",
                     "SC2004",
@@ -1460,7 +1506,7 @@ public final class CanonicalRefinementSession {
         }
         CanonicalJson.Arr pairs = CompilerProtocolJson.requireArray(
                 field(arguments, "actionHandlers"), "actionHandlers");
-        if (pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
+        if (!constructionApi && pairs.items().size() > MAX_ACTION_HANDLERS_PER_BATCH) {
             rejectAgentSurface(
                     "append_deal_behavior",
                     "SC2005",
@@ -1485,6 +1531,9 @@ public final class CanonicalRefinementSession {
                         "operations", operations,
                         "final", false))),
                 "behavior transaction");
+        if (constructionApi) transaction = CompilerProtocolJson.requireObject(
+                CompilerProtocolJson.decode(CompilerProtocolJson.encode(Map.of(
+                        "operations", operations, "final", booleanField(arguments, "final")))), "behavior transaction");
         applyDeal(transaction);
     }
 

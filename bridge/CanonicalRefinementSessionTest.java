@@ -476,20 +476,19 @@ public final class CanonicalRefinementSessionTest {
     private static void sourceFreeConstructionCompilesAndRepairs() {
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         String request = session.nextRequestJson();
-        check(toolNames(request).equals(List.of("construct_apply_deal_foundation")), "no source-writing bootstrap tool may remain");
+        check(toolNames(request).equals(List.of("construct_apply_deal_batch")), "one source-free batch must replace bootstrap rounds");
         expectRejected(() -> session.acceptToolCallJson("apply_deal_foundation", "{}"));
         var foundation = List.of(
                 cc("zero", "integer", Map.of("value", 0)),
-                cc("title", "text", Map.of("value", "Counter")),
+                cc("initialTitle", "text", Map.of("value", "Counter")),
                 cc("stateType", "declareRecord", Map.of("name", "AppState", "fields", List.of(
-                        Map.of("name", "count", "type", "int", "value", "zero"), Map.of("name", "title", "type", "string", "value", "title")))),
-                cc("state", "record", Map.of("fields", List.of(Map.of("name", "count", "value", "zero"), Map.of("name", "title", "value", "title")))),
-                cc("ret", "return", Map.of("value", "state")), cc("init", "block", Map.of("statements", List.of("ret"))));
-        expectRejected(() -> session.acceptToolCallJson("construct_apply_deal_foundation", construction(foundation, Map.of(
-                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "export class AppState {}", "initialStateBody", "init"))));
-        String next = session.acceptToolCallJson("construct_apply_deal_foundation", construction(foundation, Map.of(
-                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "stateType", "initialStateBody", "init")));
-        check(toolNames(next).contains("construct_append_deal_behavior"), "behavior must also be source-free");
+                        Map.of("name", "count", "type", "int", "value", "zero"), Map.of("name", "title", "type", "string", "value", "initialTitle")))),
+                cc("initialRecord", "record", Map.of("fields", List.of(Map.of("name", "count", "value", "zero"), Map.of("name", "title", "value", "initialTitle")))),
+                cc("initialReturn", "return", Map.of("value", "initialRecord")), cc("init", "block", Map.of("statements", List.of("initialReturn"))));
+        expectRejected(() -> session.acceptToolCallJson("construct_apply_deal_batch", construction(foundation, Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "export class AppState {}", "initialStateBody", "init",
+                "actionHandlers", List.of(), "final", true))));
+        check(request.equals(session.nextRequestJson()), "malformed constructor must not mutate the workspace");
         var behavior = List.of(
                 cc("actionType", "declareRecord", Map.of("name", "IncrementAction", "fields", List.of())),
                 cc("state", "reference", Map.of("name", "state")),
@@ -501,10 +500,24 @@ public final class CanonicalRefinementSessionTest {
                 cc("ret", "return", Map.of("value", "updated")), cc("body", "block", Map.of("statements", List.of("ret"))),
                 cc("handler", "declareUpdate", Map.of("name", "increment", "parameters", List.of(
                         Map.of("name", "state", "type", "AppState"), Map.of("name", "action", "type", "IncrementAction")), "returns", "AppState", "body", "body")));
-        session.acceptToolCallJson("construct_append_deal_behavior", construction(behavior, Map.of(
-                "supportingDeclarations", List.of(), "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", false)));
-        String ui = session.acceptToolCallJson("finish_deal", CompilerProtocolJson.encode(Map.of("coveredActions", List.of("IncrementAction"), "reason", "Increment is implemented")));
+        var batch = new java.util.ArrayList<Map<String, Object>>(foundation);
+        batch.addAll(behavior);
+        var batchArguments = Map.<String, Object>of("supportingDeclarations", List.of(), "capabilities", List.of(),
+                "appStateDeclaration", "stateType", "initialStateBody", "init",
+                "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", true);
+        String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
+        check(!toolNames(ui).contains("finish_deal"), "final batch must transition without a completion round");
         check(toolNames(ui).contains("construct_apply_deal_ui_changes"), "UI must have no source fallback");
+        var repairSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+        repairSession.nextRequestJson();
+        var invalidBatch = new java.util.ArrayList<Map<String, Object>>(batch);
+        invalidBatch.set(foundation.size() + 5, cc("sum", "reference", Map.of("name", "missing")));
+        String repair = repairSession.acceptToolCallJson("construct_apply_deal_batch", construction(invalidBatch, batchArguments));
+        check(toolNames(repair).contains("construct_patch_repair_slot")
+                && !toolNames(repair).contains("construct_apply_deal_batch"), "batch failure must expose scoped repair only: " + repair);
+        String repaired = repairSession.acceptToolCallJson("construct_patch_repair_slot", construction(batch,
+                Map.of("slot", "R5", "payload", Map.of("declaration", "handler"))));
+        check(toolNames(repaired).contains("construct_apply_deal_ui_changes"), "repaired final batch must advance directly to UI: " + repaired);
         var nodes = new java.util.ArrayList<Map<String, Object>>(List.of(
                 cc("label", "integer", Map.of("value", 7)),
                 cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),

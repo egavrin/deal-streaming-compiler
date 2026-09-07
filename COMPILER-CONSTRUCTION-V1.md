@@ -50,13 +50,20 @@ Deal UI constructor tools do not expose core indexing, arrays, assignments or ar
 Not yet covered: the complete DEAL language (including async/effect declarations, break/continue,
 decimal literals), all view annotation variants, compiler-directed per-constructor type-hole selection,
 or repair-scope expansion across artifacts. A repair may still rebuild a whole rejected body as calls.
-The existing greenfield batch boundaries also remain; this release changes the model/source boundary,
-not all granularity issues. The general repair API does not yet retain accepted construction nodes
+Source-free greenfield uses one `construct_apply_deal_batch` for state, initial state, supporting
+declarations and action-handler pairs. `final=true` advances directly to UI after compiler acceptance;
+`final=false` permits further behavior batches. No separate completion round is required. The older
+foundation/behavior/finish sequence is retained only by the source-edit compatibility mode.
+The general repair API does not yet retain accepted construction nodes
 inside a rejected slot independently.
 
 Schemas are explicit and larger than source-edit schemas. No claim of fewer tokens or lower latency
 is made before measuring live traces. The protocol uses JSON operation transport but not a nested
 JSON AST or a newly executable language. Source in inspection results is read-only context.
+
+Baseline before batching: tag `baseline-source-free-before-batching-2026-09-07`.
+Agent surface v11 records instruction bytes as well as input/context and schema bytes. Approximate
+token counts include all three, remain byte-based estimates, and do not replace provider usage.
 
 ## Tests
 
