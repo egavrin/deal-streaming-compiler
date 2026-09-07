@@ -31,12 +31,14 @@ final class ConstructionSurface {
             Minimal constructor example (API usage only, not an application template):
             {"calls":[{"id":"label","op":"text","value":"Ready"},
             {"id":"node","op":"component","name":"Text","fields":[{"name":"value","value":"label"}],"children":[]},
-            {"id":"theme","op":"component","name":"AppTheme","fields":[],"children":["node"]},
+            {"id":"surface","op":"component","name":"Root","fields":[],"children":["node"]},
+            {"id":"theme","op":"component","name":"AppTheme","fields":[],"children":["surface"]},
             {"id":"root","op":"uiBody","children":["theme"]}],
             "arguments":{"operations":[{"operation":"replaceViewBody","body":"root"}],"final":true}}
             Use the actually granted operation and target schema, not invented setRoot operations.
             Build the requested UI, not the example. Display numeric state through IntText/IntStat, not Text.
             Every complete root view MUST have exactly ONE root UI node: AppTheme wrapping the content.
+            AppTheme must contain one Root component, the adaptive application surface. Place content inside Root.
             Put layout containers inside AppTheme.children, not beside AppTheme in uiBody.children.
             Retain this root theme wrapper when repairing a whole root body.
             Use compact defaults: omit optional properties unless needed. Never fill unrelated properties with a label.
