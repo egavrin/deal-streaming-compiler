@@ -117,8 +117,7 @@ final class ArgumentRepairWorkspace {
             var dependencies = requireArray(field(patch, "dependencies"), "dependencies").items();
             if (dependencies.size() > 8) throw new IllegalArgumentException("Add at most eight dependency constructors");
             for (var dependency : dependencies) {
-                if (!ids.add(encode(field(requireObject(dependency, "dependency"), "id"))))
-                    throw new IllegalArgumentException("Dependencies must use new ids; existing siblings are immutable");
+                if (!ids.add(encode(field(requireObject(dependency, "dependency"), "id")))) continue;
                 calls.add(dependency);
             }
             if (calls.size() > 512) throw new IllegalArgumentException("Construction batch exceeds 512 calls");
@@ -140,6 +139,22 @@ final class ArgumentRepairWorkspace {
                 "path", invalid.path(), "actual", invalid.actual(), "expected", invalid.schema(),
                 "operation", invalid.remove() ? "removeUnexpectedProperty" : "replaceInvalidValue")));
         CanonicalRefinementSession.validateSchema(patch, expected);
+        if (constructorSlot()) {
+            var owner = requireObject(issue.actual(), "constructor");
+            var replacement = requireObject(field(patch, "replacement"), "replacement");
+            if (!encode(field(owner, "id")).equals(encode(field(replacement, "id"))))
+                throw new IllegalArgumentException("Replacement must preserve selected constructor id");
+            var originals = new HashMap<String, CanonicalJson.Value>();
+            for (var call : requireArray(field(candidate, "calls"), "calls").items())
+                originals.put(encode(field(requireObject(call, "call"), "id")), call);
+            var seen = new HashSet<String>();
+            for (var call : requireArray(field(patch, "dependencies"), "dependencies").items()) {
+                String id = encode(field(requireObject(call, "dependency"), "id"));
+                if (!seen.add(id)) throw new IllegalArgumentException("Duplicate dependency id: " + id);
+                if (originals.containsKey(id) && !encode(originals.get(id)).equals(encode(call)))
+                    throw new IllegalArgumentException("Cannot change existing dependency " + id + "; reference its id or introduce a NEW id. Previous candidate unchanged.");
+            }
+        }
     }
 
     private Map<?, ?> callSchema() {
