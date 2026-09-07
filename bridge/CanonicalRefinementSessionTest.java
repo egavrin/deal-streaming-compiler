@@ -522,9 +522,10 @@ public final class CanonicalRefinementSessionTest {
         check(toolNames(constructorRepair).equals(List.of("construct_repair_call")), "only narrow constructor repair may be offered");
         check(stringField(object(constructorRepair), "input").contains("DECLARATION"), "typed diagnostic must reach the model");
         expectRejected(() -> constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
-                "calls", List.of(behavior.get(0), foundation.get(2))))));
+                "calls", List.of(behavior.get(0), cc("stateType", "declareRecord", Map.of("name", "AppState", "fields", List.of())))))));
         check(constructorRepair.equals(constructorSession.nextRequestJson()), "unauthorized sibling edits must not change repair state");
-        String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0)))));
+        check(!stringField(object(constructorRepair), "input").contains("consumerContract"), "constructor repair must not replay unrelated pack contracts");
+        String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0), foundation.get(2)))));
         check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired declaration must resume the original batch");
         check(CompilerProtocolJson.encode(CompilerProtocolJson.field(object(constructorFixed), "revision")).equals(
                 CompilerProtocolJson.encode(CompilerProtocolJson.field(object(ui), "revision"))), "constructor repair must preserve every sibling and original transaction argument");

@@ -611,7 +611,10 @@ public final class CanonicalRefinementSession {
     private String input() {
         Map<String, Object> context = new LinkedHashMap<>();
         context.put("request", instruction);
-        if (constructionRepair != null) context.put("constructorRepair", constructionRepair.snapshot());
+        if (constructionRepair != null) {
+            context.put("constructorRepair", constructionRepair.snapshot());
+            return CompilerProtocolJson.encode(context);
+        }
         if (stateEvolutionAvailable()) {
             context.put("stateProducers", CanonicalCompiler.queryRootStateProducers(deal).stream()
                     .map(this::compactDealSlice).toList());
@@ -620,7 +623,9 @@ public final class CanonicalRefinementSession {
             context.put("uiEditSurface", compactUiEditSurface(uiEditSurface));
             if (!requestedUiContracts.isEmpty()) context.put("requestedContracts", requestedUiContracts);
         } else {
-            context.put("deal", constructionApi && generation && forcedArtifact.equals("dealui")
+            context.put("deal", constructionApi && generation && generationStage().equals("bootstrap")
+                    ? Map.of("rootState", "AppState", "initializer", "initialState", "bootstrapOnly", true)
+                    : constructionApi && generation && forcedArtifact.equals("dealui")
                     ? Map.of("interface", compactInterface()) : compactDealIndex());
             if (inspection.dealUi() != null && !(constructionApi && generation && forcedArtifact.equals("deal"))) {
                 context.put("dealUi", compactDealUiIndex());
@@ -1462,6 +1467,14 @@ public final class CanonicalRefinementSession {
                 : !finalChange ? "deal"
                 : result.impact().interfaceChanged() ? "dealui" : "";
         inspection = CanonicalCompiler.inspectCanonicalApp(deal, dealUi, pack, packSpecifier);
+        if (generation && finalChange && inspection.deal().appInterface().actions().isEmpty()) {
+            forcedArtifact = "deal";
+            resetSurface();
+            transcript.clear();
+            addTranscript("apply_deal_changes", Map.of("accepted", true, "complete", false,
+                    "required", "State was accepted, but interactive behavior is missing. Append nominal action records and declareUpdate handlers for the requested interactions. Do not repeat AppState or initialState."));
+            return;
+        }
         resetSurface();
         if (generation && finalChange) {
             // UI generation is a separate provider transaction. Its complete contract is the
