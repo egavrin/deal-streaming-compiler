@@ -46,6 +46,7 @@ public final class CanonicalRefinementSessionTest {
     private CanonicalRefinementSessionTest() {}
 
     public static void main(String[] args) {
+        argumentRepairIsScopedAndTransactional();
         sourceFreeConstructionCompilesAndRepairs();
         greenfieldHostReadinessGatesUi();
         diagnosticCompactionPreservesLocationsAndEvidence();
@@ -84,6 +85,52 @@ public final class CanonicalRefinementSessionTest {
         greenfieldBehaviorBatchesAreCompilerBounded();
         oversizedFoundationRetriesWithoutCrashingOrConsumingRepair();
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
+    }
+
+    private static void argumentRepairIsScopedAndTransactional() {
+        var operand = Map.of("type", "string");
+        var callSchema = deal.compiler.DealConstruction.objectSchema(Map.of(
+                "id", operand, "value", operand));
+        var schema = deal.compiler.DealConstruction.objectSchema(Map.of(
+                "calls", Map.of("type", "array", "items", callSchema),
+                "result", operand));
+        var original = object("{\"calls\":[{\"id\":\"a\",\"value\":{\"id\":\"b\"}},"
+                + "{\"id\":\"b\",\"value\":\"unchanged\"}],\"result\":17}");
+        String originalBytes = CompilerProtocolJson.encode(original);
+        var workspace = new ArgumentRepairWorkspace("construct_test", schema, original);
+        String oldTicket = workspace.ticket();
+        String request = workspace.request(Map.of("status", "request"));
+        check(toolNames(request).equals(List.of("patch_tool_argument")), "only narrow argument repair is granted");
+        check(request.contains("availableHandles"), "repair provides existing handle choices");
+        expectRejected(() -> workspace.patch(object(CompilerProtocolJson.encode(Map.of(
+                "ticket", "stale", "replacement", "b")))));
+        check(workspace.rounds() == 0 && CompilerProtocolJson.encode(workspace.candidate()).equals(originalBytes),
+                "stale ticket cannot mutate the candidate or consume a round");
+        expectRejected(() -> workspace.patch(object(CompilerProtocolJson.encode(Map.of(
+                "ticket", oldTicket, "replacement", "b", "path", List.of("result"))))));
+        workspace.patch(object(CompilerProtocolJson.encode(Map.of("ticket", oldTicket, "replacement", "b"))));
+        check(!workspace.complete(), "second schema defect remains staged");
+        check(CompilerProtocolJson.encode(original).equals(originalBytes), "original tool arguments are immutable");
+        check(CompilerProtocolJson.encode(requireArray(field(workspace.candidate(), "calls"), "calls").items().get(1))
+                .equals(CompilerProtocolJson.encode(requireArray(field(original, "calls"), "calls").items().get(1))),
+                "unrelated sibling retains identical canonical bytes");
+        expectRejected(() -> workspace.patch(object(CompilerProtocolJson.encode(Map.of("ticket", oldTicket, "replacement", "a")))));
+        workspace.patch(object(CompilerProtocolJson.encode(Map.of("ticket", workspace.ticket(), "replacement", "a"))));
+        check(workspace.complete() && workspace.rounds() == 2, "two defects repaired separately");
+        CanonicalRefinementSession.validateSchema(workspace.candidate(), schema);
+
+        var extra = new ArgumentRepairWorkspace("construct_test", schema,
+                object("{\"calls\":[{\"id\":\"a\",\"value\":\"b\",\"unexpected\":42}],\"result\":\"a\"}"));
+        extra.patch(object(CompilerProtocolJson.encode(Map.of("ticket", extra.ticket(), "remove", true))));
+        check(extra.complete(), "unexpected property may only be removed");
+        var missing = new ArgumentRepairWorkspace("construct_test", schema,
+                object("{\"calls\":[{\"id\":\"a\"}],\"result\":\"a\"}"));
+        missing.patch(object(CompilerProtocolJson.encode(Map.of("ticket", missing.ticket(), "replacement", "b"))));
+        check(missing.complete(), "missing leaf can be inserted");
+        expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema,
+                object("{\"calls\":\"wrong\",\"result\":\"a\"}")));
+        expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema,
+                object("{\"calls\":[],\"result\":\"a\"}")));
     }
 
     private static void refinementActionInsertionCanContinueInDeal() {
@@ -619,6 +666,25 @@ public final class CanonicalRefinementSessionTest {
                 "appStateDeclaration", "stateType", "initialStateBody", "init",
                 "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", true);
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
+        var argumentSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+        String beforeArguments = argumentSession.nextRequestJson();
+        var invalidArguments = new java.util.ArrayList<Map<String, Object>>(batch);
+        invalidArguments.set(4, cc("initialReturn", "return", Map.of("value", Map.of("id", "initialRecord"))));
+        String pendingArguments = argumentSession.acceptToolCallJson("construct_apply_deal_batch", construction(invalidArguments, batchArguments));
+        check(toolNames(pendingArguments).equals(List.of("patch_tool_argument")), "schema failure narrows to one argument instead of replaying batch");
+        check(CompilerProtocolJson.intField(object(pendingArguments), "semanticRepairs") == 0,
+                "argument staging consumes no semantic repair");
+        check(field(object(beforeArguments), "revision").equals(field(object(pendingArguments), "revision")),
+                "argument staging does not modify canonical revision");
+        var grantedPatch = CompilerProtocolJson.requireObject(requireArray(field(object(pendingArguments), "tools"), "tools").items().getFirst(), "tool");
+        var patchTool = CompilerProtocolJson.requireObject(field(grantedPatch, "parameters"), "parameters");
+        var patchProps = CompilerProtocolJson.requireObject(field(patchTool, "properties"), "properties");
+        String ticket = stringField(CompilerProtocolJson.requireObject(field(patchProps, "ticket"), "ticket"), "const");
+        String afterArguments = argumentSession.acceptToolCallJson("patch_tool_argument",
+                CompilerProtocolJson.encode(Map.of("ticket", ticket, "replacement", "initialRecord")));
+        check(toolNames(afterArguments).contains("construct_apply_deal_ui_changes"), "repaired original batch compiles and advances to UI");
+        check(CompilerProtocolJson.intField(object(afterArguments), "semanticRepairs") == 0,
+                "argument repair remains distinct from semantic repair");
         var constructorSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         constructorSession.nextRequestJson();
         var wrongKind = new java.util.ArrayList<Map<String, Object>>(batch);

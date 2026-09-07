@@ -32,6 +32,9 @@ import java.nio.charset.StandardCharsets;
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
     private deal.compiler.ConstructionRepairWorkspace constructionRepair;
+    private ArgumentRepairWorkspace argumentRepair;
+    private int argumentRepairRounds;
+    private Map<String, Object> lastIssuedRequest = Map.of();
     private String constructionRepairTool;
     private boolean constructionRepairUi;
     private int constructionRepairAttempts;
@@ -329,6 +332,7 @@ public final class CanonicalRefinementSession {
 
     public String nextRequestJson() {
         if (status != Status.REQUEST) return resultJson();
+        if (argumentRepair != null) return argumentRepair.request(lastIssuedRequest);
         if (writeRounds >= maxRounds) {
             fail("SC1001", "Refinement round budget exhausted");
             return resultJson();
@@ -374,6 +378,8 @@ public final class CanonicalRefinementSession {
         request.put("tools", tools);
         request.put("round", rounds + 1);
         request.put("semanticRepairs", semanticRepairs);
+        request.put("argumentRepairRounds", argumentRepairRounds);
+        lastIssuedRequest = new LinkedHashMap<>(request);
         return CompilerProtocolJson.encode(request);
     }
 
@@ -406,12 +412,7 @@ public final class CanonicalRefinementSession {
         if (status != Status.REQUEST) throw new IllegalStateException("Refinement session is not requesting a tool");
         CanonicalJson.Obj arguments = CompilerProtocolJson.requireObject(
                 decodeToolJson(argumentsJson), "tool arguments");
-        validateIssuedCall(name, arguments);
-        rounds++;
-        if (!isReadOnlyQuery(name)) writeRounds++;
-        issuedTools = List.of();
-        acceptToolCall(name, arguments);
-        return status == Status.REQUEST ? nextRequestJson() : resultJson();
+        return acceptToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of("name", name, "arguments", arguments))));
     }
 
     /** Validates transport and current grants without consuming a round or changing the graph. */
@@ -435,14 +436,50 @@ public final class CanonicalRefinementSession {
         List<CanonicalJson.Obj> values = calls.items().stream()
                 .map(value -> CompilerProtocolJson.requireObject(value, "tool call")).toList();
         if (values.size() != 1) throw new IllegalArgumentException("The current agent surface requires exactly one tool call");
-        for (CanonicalJson.Obj value : values) validateIssuedCall(string(value, "name"),
-                CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
+        for (CanonicalJson.Obj value : values) {
+            String name = string(value, "name");
+            var arguments = CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments");
+            if (argumentRepair != null) {
+                if (!name.equals("patch_tool_argument")) throw new IllegalArgumentException("Only patch_tool_argument is granted");
+                validateSchema(arguments, (Map<?, ?>) argumentRepair.tool().get("parameters"));
+            } else if (argumentWorkspace(name, arguments) == null) validateIssuedCall(name, arguments);
+        }
         return values;
+    }
+
+    private ArgumentRepairWorkspace argumentWorkspace(String name, CanonicalJson.Obj arguments) {
+        var tool = issuedTools.stream().filter(t -> name.equals(t.get("name"))).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Tool is not granted by the current surface: " + name));
+        if (!constructionApi) return null;
+        var schema = (Map<?, ?>) tool.get("parameters");
+        var issue = ArgumentRepairWorkspace.locate(arguments, schema, List.of());
+        if (issue == null) return null;
+        return new ArgumentRepairWorkspace(name, schema, arguments);
     }
 
     /** Accepts exactly one currently granted tool per provider turn. */
     public String acceptToolCallsJson(String callsJson) {
         List<CanonicalJson.Obj> values = checkedToolCalls(callsJson);
+        var call = values.getFirst();
+        String name = string(call, "name");
+        var arguments = CompilerProtocolJson.requireObject(field(call, "arguments"), "tool arguments");
+        if (argumentRepair != null) {
+            try { argumentRepair.patch(arguments); }
+            catch (IllegalArgumentException failure) { fail("SC1020", failure.getMessage()); return resultJson(); }
+            argumentRepairRounds++;
+            lastIssuedRequest.put("argumentRepairRounds", argumentRepairRounds);
+            if (!argumentRepair.complete()) return nextRequestJson();
+            String originalTool = argumentRepair.toolName;
+            var repaired = argumentRepair.candidate();
+            argumentRepair = null;
+            return acceptToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of("name", originalTool, "arguments", repaired))));
+        }
+        argumentRepair = argumentWorkspace(name, arguments);
+        if (argumentRepair != null) {
+            lastIssuedRequest.put("argumentArtifact", uiConstructionTools.contains(name)
+                    || (name.equals("construct_repair_call") && constructionRepairUi) || forcedArtifact.equals("dealui") ? "dealui" : "deal");
+            return nextRequestJson();
+        }
         rounds++;
         if (values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) writeRounds++;
         issuedTools = List.of();
@@ -462,7 +499,7 @@ public final class CanonicalRefinementSession {
         if (name.equals("construct_repair_call")) constructionRepair.validatePatch(CompilerProtocolJson.requireArray(field(arguments, "calls"), "calls"));
     }
 
-    private static void validateSchema(CanonicalJson.Value value, Map<?, ?> schema) {
+    static void validateSchema(CanonicalJson.Value value, Map<?, ?> schema) {
         if (schema.containsKey("const") && !CompilerProtocolJson.encode(value).equals(CompilerProtocolJson.encode(schema.get("const"))))
             throw new IllegalArgumentException("Tool argument violates const");
         if (schema.get("enum") instanceof List<?> options && options.stream().noneMatch(option ->
@@ -595,6 +632,7 @@ public final class CanonicalRefinementSession {
         result.put("dealUi", status == Status.COMPLETE ? dealUi : previousDealUi);
         result.put("rounds", rounds);
         result.put("semanticRepairs", semanticRepairs);
+        result.put("argumentRepairRounds", argumentRepairRounds);
         result.put("repairMetrics", Map.of(
                 "slotsStaged", repairSlotsStaged,
                 "slotsPreserved", repairSlotsPreserved,
