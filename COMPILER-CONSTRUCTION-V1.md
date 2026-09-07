@@ -31,8 +31,10 @@ Streaming compiler adapts schemas and forwards batches; it does not emit languag
 
 ## Validation and atomicity
 
-- Unknown/backward-unavailable handles, duplicate handles, invalid names, output-kind mismatch and
+- Unknown handles, cyclic dependencies, duplicate handles, invalid names, output-kind mismatch and
   resource violations are rejected before semantic transaction mutation.
+- Calls may reference other calls in the same batch regardless of order. Resolution is compiler-owned.
+- Repair context includes preserved staged payloads, not only their hashes, so the candidate schema is visible.
 - Actual type checking, borrowed-state rules and UI bindings run through the existing authoritative
   compilers after projection. Constructor acceptance alone is NOT a semantic correctness guarantee.
 - Semantic rejection uses existing repair slots. Slot writes also require constructor batches.
