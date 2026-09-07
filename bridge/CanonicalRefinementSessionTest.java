@@ -507,6 +507,10 @@ public final class CanonicalRefinementSessionTest {
                         Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Increment", "fields", List.of()))))))),
                 "result", "button"))), deal.compiler.DealConstruction.Kind.UI);
         check(inlineAction.equals("ui.Button(onClick: action app.Increment {  })"), "inline action must use the same checked action projection");
+        String singleUiBody = new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("theme", "component", Map.of("name", "AppTheme", "children", List.of(), "fields", List.of()))),
+                "result", "theme"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(singleUiBody.equals("ui.AppTheme()"), "single UI node must be a valid body without an administrative wrapper");
         expectRejected(() -> new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("button", "component", Map.of("name", "Button", "children", List.of(), "fields", List.of(
                         Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "Bad()", "fields", List.of()))))))),

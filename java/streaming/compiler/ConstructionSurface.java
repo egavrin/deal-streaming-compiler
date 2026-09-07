@@ -30,12 +30,14 @@ final class ConstructionSurface {
             For text data use text; for numbers use integer; for booleans use boolean.
             reference(name=state) plus field(object=<state id>,name=<field>) binds state data.
             reference(name=ui) plus field binds an exact UI constant from the pack if its property needs one.
+            Token properties such as spacing require {"path":["ui","spaceMd"]}, NOT {"text":"spaceMd"}.
             action(name=<existing action type>,fields=[...]) creates an Action value, NOT a class declaration.
             Component action properties may inline {"action":{"name":"ExistingAction","fields":[]}} instead of a separate action handle.
             Action payload fields use ordinary VALUE operands, for example {"name":"value","value":{"path":["payload"]}}.
             component(name=<exact pack component>,fields=[{name:<property>,value:<VALUE id>}],children=[UI ids])
             constructs a UI node. Children is always present, even if empty. Use only declared properties.
             uiBody(children=[UI ids]) produces the result handle for replaceViewBody or a repair body slot.
+            A single UI node is also a valid view body, equivalent to uiBody containing that one node.
             A subtree replacement uses a single component/when/forEach result instead of uiBody.
             when and forEach build conditional and dynamic children. No arrays, indexing, assignment or arbitrary calls.
             Minimal constructor example (API usage only, not an application template):
