@@ -629,8 +629,17 @@ public final class CanonicalRefinementSessionTest {
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2);
         session.nextRequestJson(); counterFoundation(session); appendRun(session, "Run", "return state;");
         String duplicate = appendRun(session, "Run", "return state;");
-        check(!toolNames(duplicate).contains("apply_deal_changes"), "duplicates never unlock broad edits");
+        check(!duplicate.contains("replaceFunctionBody"), "duplicate repair must not unlock unrelated bodies");
         check(duplicate.contains("finish_deal") || duplicate.contains("patch_repair_slot"), "duplicate stays locally repairable");
+        var missingHandler = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2);
+        missingHandler.nextRequestJson();
+        missingHandler.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "appStateDeclaration", "export class AppState { count: int = 0; }",
+                "initialStateBody", "return {count: 0};", "capabilities", List.of(),
+                "supportingDeclarations", List.of("export class RunAction {}"))));
+        String retry = appendRun(missingHandler, "Run", "return state;");
+        check(toolNames(retry).contains("apply_deal_changes"), "duplicate action without accepted handler must expose repair, not empty tools");
+        check(!toolNames(retry).contains("finish_deal"), "missing handler must not be considered complete");
     }
 
     private static void stricterCheckedContractBecomesRepairInsteadOfShadowCrash() {

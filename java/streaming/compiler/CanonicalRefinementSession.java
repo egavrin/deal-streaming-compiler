@@ -677,7 +677,7 @@ public final class CanonicalRefinementSession {
                                     "Statements only; omit signature and outer braces. Return one complete AppState value on every path; initialState has no state parameter. "
                                             + "Use int locals for integer literals and loops. Only [] array literals are supported, and every empty local array must have an explicit element type, for example `let items: Item[] = [];`. "
                                             + "Store recurring schedule rules compactly; never enumerate every future occurrence")))));
-        } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal) {
+        } else if (generation && generationStage().equals("declarations") && !repairMustFinishDeal && !repairing) {
             result.add(dealBehaviorTool());
         } else if (stateEvolutionAvailable()) {
             result.add(dealStateEvolutionTool());
@@ -2020,10 +2020,7 @@ public final class CanonicalRefinementSession {
         }
         repairScopes = diagnostics.stream().flatMap(value -> value.repairScopes().stream()).distinct().toList();
         repairDiagnostics = List.copyOf(diagnostics);
-        repairMustFinishDeal = generation
-                && generationStage().equals("declarations")
-                && !diagnostics.isEmpty()
-                && diagnostics.stream().allMatch(value -> value.code().equals("E2002"));
+        repairMustFinishDeal = false;
         forcedArtifact = artifact;
     }
 
