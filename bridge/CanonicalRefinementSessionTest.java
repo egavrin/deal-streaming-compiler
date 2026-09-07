@@ -474,6 +474,14 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        var unknownField = deal.compiler.DealCompilerWorkspace.inspect(
+                "export class State { enabled: MissingType = false; }\nexport function initial(): State { return {enabled: false}; }", "/app.deal");
+        check(unknownField.diagnostics().stream().anyMatch(d -> d.code().equals("E3004") && d.message().contains("MissingType")),
+                "late-resolved field type errors must reach repair, not only secondary expected-error mismatches");
+        String composedBody = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("r", "returnRecord", Map.of("fields", List.of(Map.of("name", "value", "value", 1)))),
+                        cc("b", "block", Map.of("statements", List.of("r")))), "result", "b"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(composedBody.equals("return {value: 1};"), "block composition must preserve statement order and semantics");
         String inline = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", List.of(cc("body", "returnRecord", Map.of("fields", List.of(
                         Map.of("name", "label", "value", Map.of("text", "Привет\n\"")),

@@ -78,14 +78,16 @@ final class ConstructionSurface {
             strings in operand positions are always handles, never expressions or literals.
             Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.
             returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
-            Use a returnRecord id directly as initialStateBody or a handler body. Never place it in block.statements.
+            Use a returnRecord id directly as initialStateBody or a handler body. block concatenates statement or block handles in order.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
             one program variable; field selects a member. record assembles fields from value handles. binary computes
             if is a STATEMENT, not a conditional value: then and else must be BLOCK handles.
             For a conditional computed value, declare a fresh local, assign it inside if branches,
-            then use its reference in the returning record. Blocks contain statement handles, never VALUE handles.
+            then use its reference in the returning record. Blocks contain statement or block handles, never VALUE handles.
             a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
+            Scalar type names are int, number, boolean, string, bytes and void (return type only).
+            Other type names must name declared nominal classes; use boolean, not bool.
             In transaction arguments, all declaration/body/source/expression fields contain result handles, NOT code.
             Supporting declarations are declaration handles. Body slots need block or uiBody handles.
             An initialState body must contain a return statement for a record matching the proposed AppState.

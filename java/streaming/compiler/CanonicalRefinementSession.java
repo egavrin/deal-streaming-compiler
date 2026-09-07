@@ -643,9 +643,17 @@ public final class CanonicalRefinementSession {
                     .filter(component -> component.properties().stream().anyMatch(property ->
                             property.type().equals("int") || property.type().equals("number"))
                             || !component.events().isEmpty())
-                    .map(component -> Map.of("component", component.name(), "numericProperties",
-                            component.properties().stream().filter(property -> property.type().equals("int")
-                                    || property.type().equals("number")).toList(), "events", component.events())).toList());
+                    .map(component -> {
+                        Map<String, Object> contract = new LinkedHashMap<>();
+                        contract.put("component", component.name());
+                        Map<String, String> numeric = new LinkedHashMap<>();
+                        component.properties().stream().filter(property -> property.type().equals("int")
+                                || property.type().equals("number")).forEach(property -> numeric.put(
+                                        property.name() + (property.optional() ? "?" : ""), property.type()));
+                        if (!numeric.isEmpty()) contract.put("numericProperties", numeric);
+                        if (!component.events().isEmpty()) contract.put("events", component.events());
+                        return contract;
+                    }).toList());
         }
         if (generation && forcedArtifact.equals("dealui")) {
             context.put("componentPack", compactComponentPack());
