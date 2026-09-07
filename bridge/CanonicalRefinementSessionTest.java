@@ -561,6 +561,9 @@ public final class CanonicalRefinementSessionTest {
         check(constructorRepair.equals(constructorSession.nextRequestJson()), "unauthorized sibling edits must not change repair state");
         check(!stringField(object(constructorRepair), "input").contains("consumerContract"), "constructor repair must not replay unrelated pack contracts");
         check(stringField(object(stringField(object(constructorRepair), "input")), "requiredArtifact").equals("deal"), "narrow repair must preserve artifact/model routing");
+        String repeated = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(wrongKind.get(foundation.size())))));
+        check(stringField(object(repeated), "input").contains("NO_PROGRESS"), "identical repairs must not silently repeat identical model context");
         String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0), foundation.get(2)))));
         check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired declaration must resume the original batch");
         check(CompilerProtocolJson.encode(CompilerProtocolJson.field(object(constructorFixed), "revision")).equals(
