@@ -31,13 +31,14 @@ final class ConstructionSurface {
             Minimal constructor example (API usage only, not an application template):
             {"calls":[{"id":"label","op":"text","value":"Ready"},
             {"id":"node","op":"component","name":"Text","fields":[{"name":"value","value":"label"}],"children":[]},
-            {"id":"theme","op":"component","name":"AppTheme","fields":[],"children":[]},
-            {"id":"root","op":"uiBody","children":["theme","node"]}],
+            {"id":"theme","op":"component","name":"AppTheme","fields":[],"children":["node"]},
+            {"id":"root","op":"uiBody","children":["theme"]}],
             "arguments":{"operations":[{"operation":"replaceViewBody","body":"root"}],"final":true}}
             Use the actually granted operation and target schema, not invented setRoot operations.
             Build the requested UI, not the example. Display numeric state through IntText/IntStat, not Text.
-            Every complete root view MUST include an AppTheme component as a sibling configuration node.
-            It has no children. Layout containers own children. Retain AppTheme when repairing a whole root body.
+            Every complete root view MUST have exactly ONE root UI node: AppTheme wrapping the content.
+            Put layout containers inside AppTheme.children, not beside AppTheme in uiBody.children.
+            Retain this root theme wrapper when repairing a whole root body.
             Use compact defaults: omit optional properties unless needed. Never fill unrelated properties with a label.
             Respect component types, available state paths and nominal actions. Compiler diagnostics are authoritative.
             During repair, change only the rejected slot; preservedSlots.payload is staged read-only context.
