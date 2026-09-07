@@ -23,7 +23,7 @@ final class ArgumentRepairWorkspace {
         if (schema.get("properties") instanceof Map<?, ?> props && props.containsKey("calls")
                 && (!(optionalField(candidate, "calls") instanceof CanonicalJson.Arr calls) || calls.items().isEmpty()))
             throw new IllegalArgumentException("Incomplete tool envelope: calls must contain compiler operations before local repair");
-        issue = locate(candidate, schema, List.of());
+        issue = repairIssue(candidate);
         requireLocal(issue);
     }
 
@@ -36,6 +36,7 @@ final class ArgumentRepairWorkspace {
         var props = new LinkedHashMap<String, Object>();
         props.put("ticket", Map.of("type", "string", "const", ticket()));
         if (!issue.remove()) props.put("replacement", issue.schema());
+        if (constructorSlot()) props.put("dependencies", Map.of("type", "array", "items", callSchema(), "maxItems", 8));
         return Map.of("name", "patch_tool_argument", "description",
                 issue.remove() ? "Confirm removal of the engine-selected unexpected property by returning its ticket only. All other data is immutable."
                         : "Replace only the engine-selected invalid argument. The rest of the pending tool call is immutable.",
@@ -50,7 +51,9 @@ final class ArgumentRepairWorkspace {
         input.put("actual", issue.actual());
         input.put("operation", issue.remove() ? "removeUnexpectedProperty" : "replaceArgument");
         input.put("ticket", ticket());
-        input.put("parent", at(candidate, issue.path().subList(0, issue.path().size() - 1)));
+        if (constructorSlot()) input.put("scope", "Replace this constructor, retaining its id. You may add up to eight NEW dependency constructors. Existing sibling constructors are immutable.");
+        input.put("parent", constructorSlot() ? Map.of("collection", "calls")
+                : at(candidate, issue.path().subList(0, issue.path().size() - 1)));
         input.put("progress", unchanged == 0 ? "Correct this argument only." : "NO_PROGRESS: do not repeat the rejected value.");
         var calls = optionalField(candidate, "calls");
         if (calls instanceof CanonicalJson.Arr array) input.put("availableHandles", array.items().stream()
@@ -69,6 +72,11 @@ final class ArgumentRepairWorkspace {
                 + "The replacement schema is authoritative. A reference to an available handle is its id as a STRING, not an object. "
                 + "Do not invent handles or nest compiler operations. Do not output source code. "
                 + "For a missing dependency that cannot be expressed here, do not replace it with unrelated data.";
+        if (constructorSlot()) instructions = "Repair the selected compiler constructor via patch_tool_argument. "
+                + "Return its complete replacement with the SAME id, plus dependencies: an array of NEW constructors (empty when unnecessary). "
+                + "Do not replace unrelated existing constructors. Use index+assign for indexed writes, never array indexes inside path. "
+                + "The supplied constructor schemas are authoritative. Handle operands are plain ids without embedded quotes. "
+                + "No raw source code. Fix all schema defects in this constructor, not only the first reported field.";
         String encodedInput = encode(input);
         var tools = List.of(tool());
         String encodedTools = encode(tools);
@@ -90,13 +98,53 @@ final class ArgumentRepairWorkspace {
         if (++rounds > 8) throw new IllegalArgumentException("Argument repair budget exhausted");
         var next = (CanonicalJson.Obj) replace(candidate, issue.path(), 0,
                 issue.remove() ? CanonicalJson.Null.INSTANCE : field(patch, "replacement"), issue.remove());
+        if (constructorSlot()) {
+            var original = (CanonicalJson.Obj) issue.actual();
+            var replacement = requireObject(field(patch, "replacement"), "replacement");
+            if (!encode(field(original, "id")).equals(encode(field(replacement, "id"))))
+                throw new IllegalArgumentException("Replacement must preserve the selected constructor id");
+            var calls = new ArrayList<>(requireArray(field(next, "calls"), "calls").items());
+            var ids = new HashSet<String>();
+            for (var call : calls) ids.add(encode(field(requireObject(call, "call"), "id")));
+            var dependencies = requireArray(field(patch, "dependencies"), "dependencies").items();
+            if (dependencies.size() > 8) throw new IllegalArgumentException("Add at most eight dependency constructors");
+            for (var dependency : dependencies) {
+                if (!ids.add(encode(field(requireObject(dependency, "dependency"), "id"))))
+                    throw new IllegalArgumentException("Dependencies must use new ids; existing siblings are immutable");
+                calls.add(dependency);
+            }
+            if (calls.size() > 512) throw new IllegalArgumentException("Construction batch exceeds 512 calls");
+            next = (CanonicalJson.Obj) replace(next, List.of("calls"), 0, CanonicalJson.arr(calls), false);
+        }
         if (encode(next).equals(encode(candidate))) {
             if (++unchanged >= 2) throw new IllegalArgumentException("Argument repair made no progress twice");
         } else unchanged = 0;
-        var nextIssue = locate(next, schema, List.of());
+        var nextIssue = repairIssue(next);
         if (nextIssue != null) requireLocal(nextIssue);
         candidate = next;
         issue = nextIssue;
+    }
+
+    private Map<?, ?> callSchema() {
+        return (Map<?, ?>) ((Map<?, ?>) ((Map<?, ?>) schema.get("properties")).get("calls")).get("items");
+    }
+
+    private boolean constructorSlot() {
+        return issue.path().size() == 2 && issue.path().getFirst().equals("calls")
+                && issue.actual() instanceof CanonicalJson.Obj obj && optionalField(obj, "id") != null;
+    }
+
+    private Issue repairIssue(CanonicalJson.Obj value) {
+        var found = locate(value, schema, List.of());
+        if (found != null && found.path().size() >= 2 && found.path().getFirst().equals("calls")
+                && found.path().get(1) instanceof Integer) {
+            var path = found.path().subList(0, 2);
+            var owner = at(value, path);
+            if (owner instanceof CanonicalJson.Obj obj && optionalField(obj, "id") instanceof CanonicalJson.Str
+                    && optionalField(obj, "op") instanceof CanonicalJson.Str)
+                return new Issue(path, callSchema(), owner, false);
+        }
+        return found;
     }
 
     private static void requireLocal(Issue issue) {

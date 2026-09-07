@@ -132,6 +132,26 @@ public final class CanonicalRefinementSessionTest {
         expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema,
                 object("{\"calls\":[],\"result\":\"a\"}")));
         expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema, object("{}")));
+        var constructorSchema = deal.compiler.DealConstruction.objectSchema(Map.of("calls", Map.of(
+                "type", "array", "items", Map.of("anyOf", deal.compiler.DealConstruction.operationSchemas()))));
+        var indexed = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("write", "assign", Map.of("target", Map.of("path", List.of("items", Map.of("path", List.of("i")))), "value", 1)),
+                cc("sibling", "integer", Map.of("value", 9))))));
+        var indexedWorkspace = new ArgumentRepairWorkspace("construct_test", constructorSchema, indexed);
+        String narrowRequest = indexedWorkspace.request(Map.of());
+        check(!stringField(object(narrowRequest), "input").contains("\"value\":9"), "repair input excludes unrelated constructor bodies");
+        expectRejected(() -> indexedWorkspace.patch(object(CompilerProtocolJson.encode(Map.of(
+                "ticket", indexedWorkspace.ticket(), "replacement", cc("write", "assign", Map.of("target", "target", "value", 1)),
+                "dependencies", List.of(cc("sibling", "integer", Map.of("value", 0))))))));
+        check(CompilerProtocolJson.encode(indexedWorkspace.candidate()).equals(CompilerProtocolJson.encode(indexed)),
+                "dependency collision cannot overwrite a sibling");
+        indexedWorkspace.patch(object(CompilerProtocolJson.encode(Map.of(
+                "ticket", indexedWorkspace.ticket(), "replacement", cc("write", "assign", Map.of("target", "target", "value", 1)),
+                "dependencies", List.of(cc("target", "index", Map.of("array", Map.of("path", List.of("items")), "index", Map.of("path", List.of("i")))))))));
+        check(indexedWorkspace.complete(), "constructor repair may introduce a required index dependency");
+        String projected = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", field(indexedWorkspace.candidate(), "calls"), "result", "write"))), deal.compiler.DealConstruction.Kind.STATEMENT);
+        check(projected.contains("items[i] = 1"), "index repair preserves indexed-write semantics instead of replacing it with member access");
     }
 
     private static void refinementActionInsertionCanContinueInDeal() {
@@ -682,7 +702,7 @@ public final class CanonicalRefinementSessionTest {
         var patchProps = CompilerProtocolJson.requireObject(field(patchTool, "properties"), "properties");
         String ticket = stringField(CompilerProtocolJson.requireObject(field(patchProps, "ticket"), "ticket"), "const");
         String afterArguments = argumentSession.acceptToolCallJson("patch_tool_argument",
-                CompilerProtocolJson.encode(Map.of("ticket", ticket, "replacement", "initialRecord")));
+                CompilerProtocolJson.encode(Map.of("ticket", ticket, "replacement", cc("initialReturn", "return", Map.of("value", "initialRecord")), "dependencies", List.of())));
         check(toolNames(afterArguments).contains("construct_apply_deal_ui_changes"), "repaired original batch compiles and advances to UI");
         check(CompilerProtocolJson.intField(object(afterArguments), "semanticRepairs") == 0,
                 "argument repair remains distinct from semantic repair");
