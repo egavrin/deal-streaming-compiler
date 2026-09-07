@@ -31,6 +31,14 @@ final class ConstructionSurface {
             Supporting declarations are declaration handles. Body slots need block or uiBody handles.
             An initialState body must contain a return statement for a record matching the proposed AppState.
             During repair, preservedSlots.payload describes staged changes; it supersedes the committed index.
+            Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
+            Its handler MUST use declareUpdate, parameters state:AppState and action:YourActionType, returns:AppState.
+            Read state fields through reference(name=state) and field(object=<state handle>, name=<field name>).
+            State and action are borrowed: never assign to them. Construct and return replacement state instead,
+            preserving unchanged fields. A void function or assignment to a bare state field is NOT an update.
+            Supply each action/handler pair in arguments.actionHandlers using their declaration handles.
+            Creating an unused handler call does not install it. Empty actionHandlers cannot satisfy behavior.
+            declareFunction is for ordinary helper functions, not UI input handlers.
             For Deal UI, component names come from the supplied pack. fields bind named properties to value handles;
             children are earlier UI handles. action binds a nominal action to named value handles. forEach binds one
             item with a typed collection and key; when creates a conditional subtree. uiBody groups UI children.
@@ -46,7 +54,7 @@ final class ConstructionSurface {
         if (!hasCode(schema, "", false)) return original;
         var result = new LinkedHashMap<String, Object>();
         result.put("name", "construct_" + original.get("name"));
-        result.put("description", "Use compiler construction calls to perform the currently authorized " + original.get("name") + " transaction. No source text is accepted.");
+        result.put("description", "Use compiler construction calls to perform the currently authorized " + original.get("name") + " transaction. No source text is accepted. " + original.get("description"));
         result.put("strict", true);
         var calls = ((Map<?, ?>) CanonicalConstruction.contract(ui).get("properties")).get("calls");
         result.put("parameters", DealConstruction.objectSchema(Map.of("calls", calls,
