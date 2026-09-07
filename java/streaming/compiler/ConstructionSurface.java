@@ -64,6 +64,7 @@ final class ConstructionSurface {
             strings in operand positions are always handles, never expressions or literals.
             Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.
             returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
+            Use a returnRecord id directly as initialStateBody or a handler body. Never place it in block.statements.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
             one program variable; field selects a member. record assembles fields from value handles. binary computes
             a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
@@ -81,6 +82,13 @@ final class ConstructionSurface {
             preserving unchanged fields. A void function or assignment to a bare state field is NOT an update.
             When the authorized tool accepts actionHandlers, supply each action/handler pair there using declaration handles.
             Creating an unused handler call does not install it. Empty actionHandlers cannot satisfy behavior.
+            Action registration example (only an API illustration for a state with one value:int field):
+            calls=[{"id":"a","op":"declareRecord","name":"SetValue","fields":[{"name":"value","type":"int","value":0}]},
+            {"id":"v","op":"path","parts":["action","value"]},
+            {"id":"b","op":"returnRecord","fields":[{"name":"value","value":"v"}]},
+            {"id":"h","op":"declareUpdate","name":"onSetValue","parameters":[{"name":"state","type":"AppState"},{"name":"action","type":"SetValue"}],"returns":"AppState","body":"b"}]
+            is registered with actionHandlers=[{"actionDeclaration":"a","handlerDeclaration":"h"}].
+            Build the user's requested transitions, not this illustration. Preserve every actual state field.
             declareFunction is for ordinary helper functions, not UI input handlers.
             For Deal UI, component names come from the supplied pack. fields bind named properties to value handles;
             children are earlier UI handles. action binds a nominal action to named value handles. forEach binds one
