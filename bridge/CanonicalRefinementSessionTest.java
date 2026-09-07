@@ -726,7 +726,7 @@ public final class CanonicalRefinementSessionTest {
         var patchTool = CompilerProtocolJson.requireObject(field(grantedPatch, "parameters"), "parameters");
         var patchProps = CompilerProtocolJson.requireObject(field(patchTool, "properties"), "properties");
         String ticket = stringField(CompilerProtocolJson.requireObject(field(patchProps, "ticket"), "ticket"), "const");
-        var badPatch = Map.of("ticket", ticket, "replacement", cc("initialReturn", "return", Map.of("value", Map.of("emptyArray", true))), "dependencies", List.of());
+        var badPatch = Map.of("ticket", ticket, "replacement", cc("initialReturn", "return", Map.of("value", Map.of("emptyArray", Map.of()))), "dependencies", List.of());
         String badPatchCalls = CompilerProtocolJson.encode(List.of(Map.of("name", "patch_tool_argument", "arguments", badPatch)));
         check(argumentSession.validateToolCallsJson(badPatchCalls).contains("\"valid\":true"),
                 "parsed invalid repair is engine feedback, not a transport retry");

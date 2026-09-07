@@ -73,7 +73,7 @@ final class ConstructionSurface {
             Work only through compiler construction API calls, not source code. Source shown in read-only context
             is for inspection only. Never output code, expressions, signatures or declarations as strings.
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
-            Only scalar text/path/integer/boolean operands may be inline objects. Every computation (binary, unary,
+            Only text/path/integer/boolean and emptyArray operands may be inline objects. Every computation (binary, unary,
             call, record, array, etc.) must be a separate entry in calls with an id; consumers use that id as a string.
             Never nest {"binary":{...}} or {"op":"binary",...} inside an operand. This is a flat API, not a JSON AST.
             The top-level object MUST contain BOTH calls AND arguments. Defining calls alone installs nothing.
@@ -109,6 +109,8 @@ final class ConstructionSurface {
             Scalar type names are int, number, boolean, string, bytes and void (return type only).
             Nominal type names must name declared classes; use boolean, not bool. Array types use T[], for example int[] or Item[].
             Use emptyArray for an array value, record for a nominal object value, never a numeric placeholder or a declaration handle.
+            Prefer {"emptyArray":true} for an empty array VALUE directly in fields[].value or local.value.
+            This literal requires no handle or program variable. The separate emptyArray constructor remains valid.
             For collections, use a typed fresh local with emptyArray, populate via index+assign inside its block, then return its path.
             A declaration default must match its field type; array fields can default to emptyArray. Do not invent wrapper classes for arrays.
             In transaction arguments, all declaration/body/source/expression fields contain result handles, NOT code.
