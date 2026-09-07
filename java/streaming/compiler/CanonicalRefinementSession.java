@@ -31,6 +31,7 @@ import java.nio.charset.StandardCharsets;
 /** Provider-neutral LLM-facing refinement session owned by streaming-compiler. */
 public final class CanonicalRefinementSession {
     private boolean constructionApi;
+    private final Set<String> requestedRepairContext = new LinkedHashSet<>();
     private String dealReasoningEffort = "low";
     private String uiReasoningEffort = "none";
 
@@ -50,7 +51,7 @@ public final class CanonicalRefinementSession {
         constructionApi = true;
         return this;
     }
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v12";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v13";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -527,6 +528,7 @@ public final class CanonicalRefinementSession {
             case "replace_deal_ui_subtree" -> replaceDealUiSubtree(arguments);
             case "apply_deal_ui_changes" -> applyDealUi(arguments);
             case "patch_repair_slot" -> patchRepairSlot(arguments);
+            case "query_repair_context" -> requestedRepairContext.addAll(stringArrayOr(arguments, "slots", List.of()));
             case "drop_repair_slot" -> dropRepairSlot(arguments);
             case "artifact_unchanged" -> artifactUnchanged(arguments);
             case "unchanged" -> unchanged();
@@ -536,6 +538,7 @@ public final class CanonicalRefinementSession {
 
     private static boolean isReadOnlyQuery(String name) {
         return name.equals("query_deal_module")
+                || name.equals("query_repair_context")
                 || name.equals("query_ui_contracts")
                 || name.equals("inspect_deal_change")
                 || name.equals("inspect_deal_ui_change")
@@ -624,6 +627,7 @@ public final class CanonicalRefinementSession {
                             "diagnostics", compactDiagnostics(active.diagnostics())),
                     "preservedSlots", repairWorkspace.slots().stream()
                             .filter(value -> value.status() != RepairSlotStatus.REJECTED)
+                            .filter(value -> !constructionApi || repairContextSlotIds().contains(value.slotId()))
                             .map(value -> Map.of(
                                     "slot", value.slotId(),
                                     "status", value.status().name(),
@@ -631,9 +635,13 @@ public final class CanonicalRefinementSession {
                                     "payload", agentRepairPayload(value),
                                     "payloadFingerprint", value.payloadFingerprint()))
                             .toList()));
+            if (constructionApi) context.put("otherPreservedSlots", repairWorkspace.slots().stream()
+                    .filter(value -> value.status() != RepairSlotStatus.REJECTED && !repairContextSlotIds().contains(value.slotId()))
+                    .map(value -> Map.of("slot", value.slotId(), "operation", value.operation(), "status", value.status().name()))
+                    .toList());
         }
         if (!repairScopes.isEmpty()) context.put("repairScopes", compactRepairScopes());
-        if (!repairDiagnostics.isEmpty()) {
+        if (!repairDiagnostics.isEmpty() && !(constructionApi && repairWorkspace != null)) {
             context.put("repairDirective", Map.of(
                     "instruction", "Change the rejected operation according to its diagnostics. Never resubmit the previous payload.",
                     "rejectedCandidateFingerprint", rejectedAttemptFingerprint,
@@ -652,6 +660,15 @@ public final class CanonicalRefinementSession {
             List<Map<String, Object>> repairTools = new ArrayList<>();
             repairTools.add(repairSlotTool());
             RepairSlot active = activeRejectedRepairSlot();
+            if (constructionApi) {
+                var omitted = repairWorkspace.slots().stream()
+                        .filter(value -> value.status() != RepairSlotStatus.REJECTED && !repairContextSlotIds().contains(value.slotId()))
+                        .map(RepairSlot::slotId).toList();
+                if (!omitted.isEmpty()) repairTools.add(tool("query_repair_context",
+                        "Read additional preserved slot payloads only when the supplied compiler dependency cone is insufficient. Does not grant any write.",
+                        objectSchema(Map.of("slots", Map.of("type", "array", "minItems", 1, "maxItems", 8,
+                                "uniqueItems", true, "items", enumSchema(omitted))))));
+            }
             if (repairArtifact.equals("deal")
                     && active.operation().equals(DealCompilerWorkspace.ADD_DECLARATION)) {
                 repairTools.add(tool(
@@ -1005,6 +1022,22 @@ public final class CanonicalRefinementSession {
         return repairWorkspace.slots().stream()
                 .filter(value -> value.status() == RepairSlotStatus.REJECTED)
                 .findFirst().orElseThrow(() -> new IllegalStateException("Repair workspace has no rejected slot"));
+    }
+
+    private Set<String> repairContextSlotIds() {
+        var groups = new LinkedHashSet<String>();
+        var pending = new java.util.ArrayDeque<String>();
+        pending.add(activeRejectedRepairSlot().dependencyGroupId());
+        while (!pending.isEmpty()) {
+            String id = pending.removeFirst();
+            if (!groups.add(id)) continue;
+            repairWorkspace.groups().stream().filter(group -> group.groupId().equals(id))
+                    .findFirst().ifPresent(group -> pending.addAll(group.dependsOn()));
+        }
+        var slots = new LinkedHashSet<String>(requestedRepairContext);
+        repairWorkspace.slots().stream().filter(slot -> groups.contains(slot.dependencyGroupId()))
+                .forEach(slot -> slots.add(slot.slotId()));
+        return slots;
     }
 
     private boolean foundationReady() {
@@ -1853,6 +1886,7 @@ public final class CanonicalRefinementSession {
             return;
         }
         repairWorkspace = workspace;
+        requestedRepairContext.clear();
         repairSlotsStaged += workspace.slots().size();
         repairSlotsPreserved += (int) workspace.slots().stream()
                 .filter(value -> value.status() == RepairSlotStatus.SEALED
@@ -1993,6 +2027,7 @@ public final class CanonicalRefinementSession {
 
     private void clearRepairWorkspace() {
         repairWorkspace = null;
+        requestedRepairContext.clear();
         repairNoProgressAttempts = 0;
         repairArtifact = "";
         repairFinal = false;

@@ -16,6 +16,8 @@ final class ConstructionSurface {
             You are building ONLY Deal UI through the compiler API. DEAL is already compiled and frozen.
             Do not create state, initializers, records, functions or handlers. Bind existing actions from deal.interface.
             You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
+            Prefer path(parts=["state","field"]) for state/member access. VALUE operands allow inline integers
+            and booleans; strings remain handles. Use text calls for display strings. No indexing is permitted.
             Component contracts encode props as property-name:type maps. A trailing ? in the contract key
             marks an optional property; omit ? when binding it. Missing parent means any; missing events
             or capabilities means empty. All pack components remain available, not a selected subset.
@@ -57,9 +59,11 @@ final class ConstructionSurface {
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
             operands are ids of calls in the same batch. Order is irrelevant; cycles are rejected.
             These ids are temporary compiler value handles, not program variables or inspected symbol/node IDs.
-            Every fields[].value, including declareRecord default values, must name a VALUE call id in this batch.
-            For a zero default, first issue integer with id zero and value 0, then use value zero in the field.
-            Do not use the string 0 as an operand unless an earlier call actually has id 0.
+            VALUE operands may be a handle string, an inline integer, or an inline boolean.
+            Prefer inline numbers/booleans over separate calls. Display strings still use the text constructor;
+            strings in operand positions are always handles, never expressions or literals.
+            Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.
+            returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
             one program variable; field selects a member. record assembles fields from value handles. binary computes
             a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
@@ -68,6 +72,8 @@ final class ConstructionSurface {
             Supporting declarations are declaration handles. Body slots need block or uiBody handles.
             An initialState body must contain a return statement for a record matching the proposed AppState.
             During repair, preservedSlots.payload describes staged changes; it supersedes the committed index.
+            Only compiler dependency slots are expanded. Other preserved slots are summarized; query_repair_context
+            can read them if needed, but never grants permission to change them.
             Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
             Build state, initialState and all action-handler pairs in ONE construct_apply_deal_batch call.
             Set arguments.final=true when requested behavior is complete; do not reserve a separate finish round.

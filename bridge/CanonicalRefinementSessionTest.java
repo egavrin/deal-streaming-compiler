@@ -534,6 +534,14 @@ public final class CanonicalRefinementSessionTest {
         String repair = repairSession.acceptToolCallJson("construct_apply_deal_batch", construction(invalidBatch, batchArguments));
         check(toolNames(repair).contains("construct_patch_repair_slot")
                 && !toolNames(repair).contains("construct_apply_deal_batch"), "batch failure must expose scoped repair only: " + repair);
+        var repairInput = object(stringField(object(repair), "input"));
+        var omittedSlots = CompilerProtocolJson.requireArray(CompilerProtocolJson.field(repairInput, "otherPreservedSlots"), "omitted slots");
+        check(!omittedSlots.items().isEmpty(), "unrelated slots must not be expanded into repair context");
+        String omittedId = stringField(CompilerProtocolJson.requireObject(omittedSlots.items().get(0), "slot"), "slot");
+        String queried = repairSession.acceptToolCallJson("query_repair_context", CompilerProtocolJson.encode(Map.of("slots", List.of(omittedId))));
+        check(CompilerProtocolJson.intField(object(queried), "semanticRepairs") == CompilerProtocolJson.intField(object(repair), "semanticRepairs"),
+                "read-only repair context query must not consume repair budget");
+        check(!toolNames(queried).contains("construct_apply_deal_batch"), "context expansion must not grant sibling writes");
         String repaired = repairSession.acceptToolCallJson("construct_patch_repair_slot", construction(batch,
                 Map.of("slot", "R5", "payload", Map.of("declaration", "handler"))));
         check(toolNames(repaired).contains("construct_apply_deal_ui_changes"), "repaired final batch must advance directly to UI: " + repaired);
@@ -555,6 +563,16 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object(complete), "accepted"), "correct construction must commit a canonical pair: " + complete);
         check(stringField(object(complete), "deal").contains("state.count + 1"), "compiler must emit the expression");
         var constructor = new deal.ui.CanonicalConstruction(false);
+        String compact = constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("count", "path", Map.of("parts", List.of("state", "count"))),
+                cc("sum", "binary", Map.of("left", "count", "operator", "+", "right", 1)),
+                cc("out", "returnRecord", Map.of("fields", List.of(Map.of("name", "count", "value", "sum"), Map.of("name", "enabled", "value", true))))),
+                "result", "out"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(compact.equals("return {count: (state.count + 1), enabled: true};"), "compact operands must preserve core projection");
+        expectRejected(() -> new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("p", "path", Map.of("parts", List.of("state", "items[0]")))), "result", "p"))), deal.compiler.DealConstruction.Kind.VALUE));
+        expectRejected(() -> new deal.ui.CanonicalConstruction(true).build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("p", "returnRecord", Map.of("fields", List.of()))), "result", "p"))), deal.compiler.DealConstruction.Kind.BLOCK));
         String forward = constructor.build(object(CompilerProtocolJson.encode(Map.of("calls", List.of(
                 cc("b", "block", Map.of("statements", List.of("r"))),
                 cc("r", "return", Map.of("value", "v")),
