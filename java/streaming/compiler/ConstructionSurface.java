@@ -99,12 +99,16 @@ final class ConstructionSurface {
             preserving unchanged fields. A void function or assignment to a bare state field is NOT an update.
             When the authorized tool accepts actionHandlers, supply each action/handler pair there using declaration handles.
             Creating an unused handler call does not install it. Empty actionHandlers cannot satisfy behavior.
-            Action registration example (only an API illustration for a state with one value:int field):
-            calls=[{"id":"a","op":"declareRecord","name":"SetValue","fields":[{"name":"value","type":"int","value":0}]},
+            Complete valid transaction example (API illustration only; implement the user's concept instead):
+            {"calls":[
+            {"id":"s","op":"declareRecord","name":"AppState","fields":[{"name":"value","type":"int","value":0}]},
+            {"id":"i","op":"returnRecord","fields":[{"name":"value","value":0}]},
+            {"id":"a","op":"declareRecord","name":"SetValue","fields":[{"name":"value","type":"int","value":0}]},
             {"id":"v","op":"path","parts":["action","value"]},
             {"id":"b","op":"returnRecord","fields":[{"name":"value","value":"v"}]},
-            {"id":"h","op":"declareUpdate","name":"onSetValue","parameters":[{"name":"state","type":"AppState"},{"name":"action","type":"SetValue"}],"returns":"AppState","body":"b"}]
-            is registered with actionHandlers=[{"actionDeclaration":"a","handlerDeclaration":"h"}].
+            {"id":"h","op":"declareUpdate","name":"onSetValue","parameters":[{"name":"state","type":"AppState"},{"name":"action","type":"SetValue"}],"returns":"AppState","body":"b"}],
+            "arguments":{"appStateDeclaration":"s","initialStateBody":"i","supportingDeclarations":[],
+            "actionHandlers":[{"actionDeclaration":"a","handlerDeclaration":"h"}],"capabilities":[],"final":true}}
             Build the user's requested transitions, not this illustration. Preserve every actual state field.
             declareFunction is for ordinary helper functions, not UI input handlers.
             For Deal UI, component names come from the supplied pack. fields bind named properties to value handles;
