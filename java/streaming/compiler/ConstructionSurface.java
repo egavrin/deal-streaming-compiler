@@ -18,6 +18,9 @@ final class ConstructionSurface {
             You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
             Prefer path(parts=["state","field"]) for state/member access. VALUE operands allow inline integers
             and booleans; strings remain handles. Use text calls for display strings. No indexing is permitted.
+            Prefer inline VALUE operands to avoid redundant handles: {"text":"Ready"} is literal text,
+            {"path":["state","count"]} is a state field, {"path":["payload"]} is event data.
+            Use these objects directly as fields[].value. Never use bare state for a numeric property.
             Component contracts encode props as property-name:type maps. A trailing ? in the contract key
             marks an optional property; omit ? when binding it. Missing parent means any; missing events
             or capabilities means empty. All pack components remain available, not a selected subset.
@@ -60,6 +63,9 @@ final class ConstructionSurface {
             operands are ids of calls in the same batch. Order is irrelevant; cycles are rejected.
             These ids are temporary compiler value handles, not program variables or inspected symbol/node IDs.
             VALUE operands may be a handle string, an inline integer, or an inline boolean.
+            Compact inline operands are preferred: {"text":"Ready"} for literal text including empty text,
+            {"path":["state","count"]} for a field, {"path":["action","value"]} for action data.
+            These objects replace redundant text/path calls and can be used in fields[].value or binary operands.
             Prefer inline numbers/booleans over separate calls. Display strings still use the text constructor;
             strings in operand positions are always handles, never expressions or literals.
             Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.

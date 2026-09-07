@@ -474,6 +474,15 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void sourceFreeConstructionCompilesAndRepairs() {
+        String inline = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("body", "returnRecord", Map.of("fields", List.of(
+                        Map.of("name", "label", "value", Map.of("text", "Привет\n\"")),
+                        Map.of("name", "count", "value", Map.of("path", List.of("state", "count"))))))),
+                "result", "body"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(inline.contains("state.count") && inline.contains("\\n\\\""), "inline operands must preserve literal escaping and typed paths");
+        expectRejected(() -> new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("body", "return", Map.of("value", Map.of("path", List.of("state.count + 1"))))),
+                "result", "body"))), deal.compiler.DealConstruction.Kind.STATEMENT));
         try {
             new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                     "calls", List.of(cc("n", "integer", Map.of("value", 1)),
