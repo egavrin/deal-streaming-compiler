@@ -73,6 +73,9 @@ final class ConstructionSurface {
             Work only through compiler construction API calls, not source code. Source shown in read-only context
             is for inspection only. Never output code, expressions, signatures or declarations as strings.
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
+            Only scalar text/path/integer/boolean operands may be inline objects. Every computation (binary, unary,
+            call, record, array, etc.) must be a separate entry in calls with an id; consumers use that id as a string.
+            Never nest {"binary":{...}} or {"op":"binary",...} inside an operand. This is a flat API, not a JSON AST.
             The top-level object MUST contain BOTH calls AND arguments. Defining calls alone installs nothing.
             For construct_apply_deal_batch the envelope is:
             {"calls":[...],"arguments":{"appStateDeclaration":"stateDecl","initialStateBody":"initBody",
