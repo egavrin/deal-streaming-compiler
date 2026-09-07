@@ -20,6 +20,9 @@ final class ArgumentRepairWorkspace {
         this.toolName = toolName;
         this.schema = schema;
         this.candidate = candidate;
+        if (schema.get("properties") instanceof Map<?, ?> props && props.containsKey("calls")
+                && (!(optionalField(candidate, "calls") instanceof CanonicalJson.Arr calls) || calls.items().isEmpty()))
+            throw new IllegalArgumentException("Incomplete tool envelope: calls must contain compiler operations before local repair");
         issue = locate(candidate, schema, List.of());
         requireLocal(issue);
     }
@@ -32,10 +35,10 @@ final class ArgumentRepairWorkspace {
     Map<String, Object> tool() {
         var props = new LinkedHashMap<String, Object>();
         props.put("ticket", Map.of("type", "string", "const", ticket()));
-        if (issue.remove()) props.put("remove", Map.of("type", "boolean", "const", true));
-        else props.put("replacement", issue.schema());
+        if (!issue.remove()) props.put("replacement", issue.schema());
         return Map.of("name", "patch_tool_argument", "description",
-                "Replace only the engine-selected invalid argument. The rest of the pending tool call is immutable.",
+                issue.remove() ? "Confirm removal of the engine-selected unexpected property by returning its ticket only. All other data is immutable."
+                        : "Replace only the engine-selected invalid argument. The rest of the pending tool call is immutable.",
                 "parameters", deal.compiler.DealConstruction.objectSchema(props));
     }
 
@@ -45,6 +48,8 @@ final class ArgumentRepairWorkspace {
         input.put("tool", toolName);
         input.put("path", issue.path());
         input.put("actual", issue.actual());
+        input.put("operation", issue.remove() ? "removeUnexpectedProperty" : "replaceArgument");
+        input.put("ticket", ticket());
         input.put("parent", at(candidate, issue.path().subList(0, issue.path().size() - 1)));
         input.put("progress", unchanged == 0 ? "Correct this argument only." : "NO_PROGRESS: do not repeat the rejected value.");
         var calls = optionalField(candidate, "calls");
@@ -59,7 +64,8 @@ final class ArgumentRepairWorkspace {
                     return summary;
                 }).toList());
         String instructions = "Repair one invalid tool argument. No program has been changed. "
-                + "Use patch_tool_argument with the issued ticket and only the replacement value, not the whole batch. "
+                + (issue.remove() ? "This property is forbidden. Call patch_tool_argument with the issued ticket ONLY to remove it. "
+                        : "Use patch_tool_argument with the issued ticket and only the replacement value, not the whole batch. ")
                 + "The replacement schema is authoritative. A reference to an available handle is its id as a STRING, not an object. "
                 + "Do not invent handles or nest compiler operations. Do not output source code. "
                 + "For a missing dependency that cannot be expressed here, do not replace it with unrelated data.";

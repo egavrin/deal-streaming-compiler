@@ -121,7 +121,7 @@ public final class CanonicalRefinementSessionTest {
 
         var extra = new ArgumentRepairWorkspace("construct_test", schema,
                 object("{\"calls\":[{\"id\":\"a\",\"value\":\"b\",\"unexpected\":42}],\"result\":\"a\"}"));
-        extra.patch(object(CompilerProtocolJson.encode(Map.of("ticket", extra.ticket(), "remove", true))));
+        extra.patch(object(CompilerProtocolJson.encode(Map.of("ticket", extra.ticket()))));
         check(extra.complete(), "unexpected property may only be removed");
         var missing = new ArgumentRepairWorkspace("construct_test", schema,
                 object("{\"calls\":[{\"id\":\"a\"}],\"result\":\"a\"}"));
@@ -131,6 +131,7 @@ public final class CanonicalRefinementSessionTest {
                 object("{\"calls\":\"wrong\",\"result\":\"a\"}")));
         expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema,
                 object("{\"calls\":[],\"result\":\"a\"}")));
+        expectRejected(() -> new ArgumentRepairWorkspace("construct_test", schema, object("{}")));
     }
 
     private static void refinementActionInsertionCanContinueInDeal() {
