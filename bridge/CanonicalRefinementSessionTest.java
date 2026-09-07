@@ -152,6 +152,20 @@ public final class CanonicalRefinementSessionTest {
         String projected = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
                 "calls", field(indexedWorkspace.candidate(), "calls"), "result", "write"))), deal.compiler.DealConstruction.Kind.STATEMENT);
         check(projected.contains("items[i] = 1"), "index repair preserves indexed-write semantics instead of replacing it with member access");
+        var groupCandidate = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("first", "integer", Map.of("value", "bad")),
+                cc("second", "integer", Map.of("value", "bad")),
+                cc("preserved", "integer", Map.of("value", 99))))));
+        var group = new ArgumentRepairWorkspace("construct_test", constructorSchema, groupCandidate);
+        String groupInput = stringField(object(group.request(Map.of())), "input");
+        check(groupInput.contains("repairSlots") && groupInput.contains("R2") && !groupInput.contains("\"value\":99"),
+                "grouped repair exposes only invalid constructor bodies");
+        var replacements = Map.of("R1", cc("first", "integer", Map.of("value", 1)),
+                "R2", cc("second", "integer", Map.of("value", 2)));
+        group.patch(object(CompilerProtocolJson.encode(Map.of("ticket", group.ticket(), "replacement", replacements, "dependencies", List.of()))));
+        check(group.complete() && group.rounds() == 1, "independent invalid slots are repaired in one provider turn");
+        check(requireArray(field(group.candidate(), "calls"), "calls").items().get(2)
+                .equals(requireArray(field(groupCandidate, "calls"), "calls").items().get(2)), "grouped repair preserves unrelated constructor bytes");
     }
 
     private static void refinementActionInsertionCanContinueInDeal() {

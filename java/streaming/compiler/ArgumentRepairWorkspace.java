@@ -35,7 +35,12 @@ final class ArgumentRepairWorkspace {
     Map<String, Object> tool() {
         var props = new LinkedHashMap<String, Object>();
         props.put("ticket", Map.of("type", "string", "const", ticket()));
-        if (!issue.remove()) props.put("replacement", issue.schema());
+        if (!issue.remove()) {
+            var slots = repairSlots();
+            var replacements = new LinkedHashMap<String, Object>();
+            for (int i = 0; i < slots.size(); i++) replacements.put("R" + (i + 1), slots.get(i).schema());
+            props.put("replacement", slots.size() == 1 ? issue.schema() : deal.compiler.DealConstruction.objectSchema(replacements));
+        }
         if (constructorSlot()) props.put("dependencies", Map.of("type", "array", "items", callSchema(), "maxItems", 8));
         return Map.of("name", "patch_tool_argument", "description",
                 issue.remove() ? "Confirm removal of the engine-selected unexpected property by returning its ticket only. All other data is immutable."
@@ -57,6 +62,19 @@ final class ArgumentRepairWorkspace {
                     "expected", invalid.schema(), "operation", invalid.remove() ? "removeUnexpectedProperty" : "replaceInvalidValue"));
         }
         if (constructorSlot()) input.put("scope", "Replace this constructor, retaining its id. You may add up to eight NEW dependency constructors. Existing sibling constructors are immutable.");
+        var slots = repairSlots();
+        if (slots.size() > 1) {
+            var descriptions = new ArrayList<Map<String, Object>>();
+            for (int i = 0; i < slots.size(); i++) {
+                var slot = slots.get(i);
+                var diagnostic = locate(slot.actual(), callSchema(), slot.path());
+                descriptions.add(Map.of("slot", "R" + (i + 1), "call", slot.actual(),
+                        "diagnostic", Map.of("path", diagnostic.path(), "actual", diagnostic.actual(), "expected", diagnostic.schema())));
+            }
+            input.put("repairSlots", descriptions);
+            input.put("scope", "Replace only the listed invalid slots, retaining each id. All other existing constructors are immutable.");
+            input.remove("actual"); input.remove("diagnostic"); input.remove("path");
+        }
         input.put("parent", constructorSlot() ? Map.of("collection", "calls")
                 : at(candidate, issue.path().subList(0, issue.path().size() - 1)));
         input.put("progress", unchanged == 0 ? "Correct this argument only." : "NO_PROGRESS: do not repeat the rejected value.");
@@ -84,6 +102,7 @@ final class ArgumentRepairWorkspace {
                 + "Read diagnostic.path, actual and expected: fix that schema violation in replacement. "
                 + "An operand object containing id/op is NOT a reference: use its existing handle id string, or add a NEW dependency and reference its id. "
                 + "No raw source code. Fix all schema defects in this constructor, not only the first reported field.";
+        if (slots.size() > 1) instructions += " There are multiple invalid slots. replacement is an object keyed by R1, R2, etc., with one complete constructor per issued slot. Fix the group in ONE call. Dependencies are shared across the group.";
         String encodedInput = encode(input);
         var tools = List.of(tool());
         String encodedTools = encode(tools);
@@ -104,13 +123,11 @@ final class ArgumentRepairWorkspace {
     void patch(CanonicalJson.Obj patch) {
         validatePatch(patch);
         if (++rounds > 8) throw new IllegalArgumentException("Argument repair budget exhausted");
-        var next = (CanonicalJson.Obj) replace(candidate, issue.path(), 0,
-                issue.remove() ? CanonicalJson.Null.INSTANCE : field(patch, "replacement"), issue.remove());
+        var next = candidate;
+        var slots = repairSlots();
+        for (int i = 0; i < slots.size(); i++) next = (CanonicalJson.Obj) replace(next, slots.get(i).path(), 0,
+                issue.remove() ? CanonicalJson.Null.INSTANCE : replacementAt(patch, i, slots.size()), issue.remove());
         if (constructorSlot()) {
-            var original = (CanonicalJson.Obj) issue.actual();
-            var replacement = requireObject(field(patch, "replacement"), "replacement");
-            if (!encode(field(original, "id")).equals(encode(field(replacement, "id"))))
-                throw new IllegalArgumentException("Replacement must preserve the selected constructor id");
             var calls = new ArrayList<>(requireArray(field(next, "calls"), "calls").items());
             var ids = new HashSet<String>();
             for (var call : calls) ids.add(encode(field(requireObject(call, "call"), "id")));
@@ -140,10 +157,13 @@ final class ArgumentRepairWorkspace {
                 "operation", invalid.remove() ? "removeUnexpectedProperty" : "replaceInvalidValue")));
         CanonicalRefinementSession.validateSchema(patch, expected);
         if (constructorSlot()) {
-            var owner = requireObject(issue.actual(), "constructor");
-            var replacement = requireObject(field(patch, "replacement"), "replacement");
-            if (!encode(field(owner, "id")).equals(encode(field(replacement, "id"))))
-                throw new IllegalArgumentException("Replacement must preserve selected constructor id");
+            var slots = repairSlots();
+            for (int i = 0; i < slots.size(); i++) {
+                var owner = requireObject(slots.get(i).actual(), "constructor");
+                var replacement = requireObject(replacementAt(patch, i, slots.size()), "replacement");
+                if (!encode(field(owner, "id")).equals(encode(field(replacement, "id"))))
+                    throw new IllegalArgumentException("Replacement must preserve selected constructor id");
+            }
             var originals = new HashMap<String, CanonicalJson.Value>();
             for (var call : requireArray(field(candidate, "calls"), "calls").items())
                 originals.put(encode(field(requireObject(call, "call"), "id")), call);
@@ -155,6 +175,25 @@ final class ArgumentRepairWorkspace {
                     throw new IllegalArgumentException("Cannot change existing dependency " + id + "; reference its id or introduce a NEW id. Previous candidate unchanged.");
             }
         }
+    }
+
+    private static CanonicalJson.Value replacementAt(CanonicalJson.Obj patch, int index, int count) {
+        var replacement = field(patch, "replacement");
+        return count == 1 ? replacement : field(requireObject(replacement, "replacement slots"), "R" + (index + 1));
+    }
+
+    private List<Issue> repairSlots() {
+        if (!constructorSlot()) return List.of(issue);
+        var slots = new ArrayList<Issue>();
+        var calls = requireArray(field(candidate, "calls"), "calls").items();
+        for (int i = 0; i < calls.size() && slots.size() < 8; i++) {
+            if (calls.get(i) instanceof CanonicalJson.Obj call
+                    && optionalField(call, "id") instanceof CanonicalJson.Str
+                    && optionalField(call, "op") instanceof CanonicalJson.Str
+                    && locate(call, callSchema(), List.of()) != null)
+                slots.add(new Issue(List.of("calls", i), ownerSchema(call), call, false));
+        }
+        return slots.isEmpty() ? List.of(issue) : List.copyOf(slots);
     }
 
     private Map<?, ?> callSchema() {
