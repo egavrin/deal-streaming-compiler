@@ -19,6 +19,9 @@ final class ConstructionSurface {
             is for inspection only. Never output code, expressions, signatures or declarations as strings.
             Each construct_* tool accepts a flat calls batch and transaction arguments. Each call has a unique id;
             operands are ids of earlier calls. These ids are temporary compiler value handles, not program variables.
+            Every fields[].value, including declareRecord default values, must name an earlier VALUE call id.
+            For a zero default, first issue integer with id zero and value 0, then use value zero in the field.
+            Do not use the string 0 as an operand unless an earlier call actually has id 0.
             text creates literal display data (never executable code); integer/boolean create literals. reference names
             one program variable; field selects a member. record assembles fields from value handles. binary computes
             a value. local/assign/return/if/while build statements; block groups statement handles. declareRecord and
