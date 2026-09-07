@@ -1,264 +1,168 @@
-# Streaming Compiler
+# DEAL Streaming Compiler
 
-Streaming Compiler is the provider-neutral generation engine for DEAL and Deal UI. The DEAL and
-Deal UI repositories are transpilers: they own syntax, semantic graphs, diagnostics and atomic source
-edits. This repository owns the LLM loop and exposes a compact Agent Surface derived from those rich
-compiler APIs.
+DEAL Streaming Compiler is a provider-neutral generation engine for building and modifying checked
+DEAL applications with language models. It exposes a compact, revision-scoped Agent Surface derived
+from the richer DEAL and Deal UI compiler APIs.
 
-The production architecture is:
+The model does not receive the complete compiler API and does not submit raw application source on
+the canonical construction path. It calls narrowly authorized compiler operations. The engine
+lowers those calls, validates every candidate with the production compilers, and publishes only a
+checked `app.deal` plus `app.dealui` pair.
+
+> **Status:** active research prototype. The compiler protocol, construction surface and repair
+> workspace are implemented and covered by deterministic tests. Product-level success and latency
+> gates across held-out applications are still in progress.
+
+## Architecture
 
 ```text
 user request
-  -> compact Agent Surface v3 (`inspect_deal_change`, `inspect_deal_ui_change`, `patch_repair_slot`)
-  -> model inspect/edit tools
-  -> stateless DEAL / Deal UI Compiler Protocol v2
+  -> generation engine
+  -> compact Agent Surface for the current revision
+  -> LLM compiler-tool call
+  -> DEAL compiler transaction
+  -> checked DEAL + AppInterface
+  -> compact Deal UI Agent Surface
+  -> LLM compiler-tool call
+  -> Deal UI compiler transaction
   -> checked app.deal + app.dealui
 ```
 
-The model sees short revision-local aliases such as `S3`, `B7`, `V1` and `U12`, not full semantic
-graphs or opaque compiler ids. The artifact-specific inspect tools ask the compiler for one dependency cone and unlock
-only the write operations for its edit slices. Every write carries the source digest and target
-fingerprints captured by the engine. Failed transactions preserve the canonical sources byte for
-byte; transport retries do not spend semantic repair budget.
-
-Greenfield generation and modernization must converge on this same protocol. The older direct-vs-HIR
-benchmark remains an experiment and is not the product architecture.
-
-Запускаемый прототип сравнивает две стратегии на одних задачах и через один production compiler/runtime oracle:
-
-- **A — direct:** модель стримит полный DEAL v1.2 source. Поток периодически проходит через настоящий `deal.lexer.Lexer` и `deal.parser.Parser`; лексически невозможный префикс отвергается до конца ответа. Структурно завершённый префикс сразу пробуется полным штатным compiler pipeline.
-- **B — semantic:** модель не пишет код, а стримит стабильные ID операций. `GenerationCompiler` по мере поступления заменяет текущий typed hole на допустимый HIR-node, немедленно отвергает неизвестный или несовместимый по типу choice и самостоятельно применяет единственный deterministic choice. После заполнения holes HIR pretty-printится в DEAL.
-- В обоих случаях финальный source компилируется `deal.Main compile` в JS штатным DEAL compiler, запускается production JS artifact, а stdout сравнивается с task oracle.
-
-Никакого игрушечного DEAL parser/typechecker в проекте нет. Небольшой Java bridge импортирует production `Lexer`/`Parser`; полная синтаксическая, name-resolution, typechecking, lowering и codegen-проверка выполняется production CLI.
-
-## Архитектура
+At runtime the LLM is no longer involved:
 
 ```text
-                          ┌─ direct source deltas ─ production Lexer/Parser
-Task → ModelAdapter ──────┤                         └─ early reject / compile checkpoint
-                          │
-                          └─ semantic choice deltas → GenerationCompiler
-                                                     ├─ Partial typed HIR + holes
-                                                     ├─ reject invalid choice
-                                                     ├─ deterministic completion
-                                                     └─ lower / pretty-print DEAL
-
-Both paths → deal.Main compile --backend js → generated main.js → stdout oracle → metrics
+app.deal -> DEAL runtime -> AppState
+app.dealui -> checked UI IR -> platform renderer
+renderer -- action --> DEAL runtime -- new state --> renderer
 ```
 
-Direct prompt загружается из `prompts/deal-v1.2-program.txt`: это canonical DEAL v1.2 language
-guide, адаптированный из [`deal-llm-grammar-benchmark`](https://github.com/egavrin/deal-llm-grammar-benchmark/tree/7358eed1e66f0d8cb7b6d717b6da3076b5144d92)
-для исполняемой программы с `main`. Он
-описывает arrays, nullable types, loops, classes, tables и точные stdlib API. При repair модель
-получает предыдущий исходник вместе с production compiler diagnostics. Версия и SHA-256 prompt
-записываются в JSON report.
+The responsibilities are deliberately separated:
 
-Основные контракты:
+- **DEAL** owns language syntax, semantic analysis, source construction, atomic edits and DEAL
+  diagnostics.
+- **Deal UI** owns the declarative UI language, AppInterface bindings, component-pack contracts,
+  UI construction, subtree edits and UI diagnostics.
+- **DEAL Streaming Compiler** owns the LLM loop, Agent Surface projection, transport-neutral tool
+  contracts, generation stages, repair policy and metrics.
+- **Hosts such as DEAL Studio** own provider transport, persistence, runtime integration and native
+  rendering.
 
-- `src/generation-compiler.js`: `start(task)`, `getChoices()`, `apply(choiceId)`, `isComplete()`, `finish()`.
-- `src/model-adapters.js`: абстрактный `ModelAdapter`, offline `ReplayModelAdapter`, общий `OpenAICompatibleModelAdapter`, OpenRouter и локальный Ollama adapters.
-- `src/deal-compiler.js`: production syntax bridge, compiler invocation и functional oracle.
-- `src/runners.js`: direct/semantic streaming loops, repair и единые метрики.
-- `tasks/tasks.json`: четыре репрезентативных задачи — literal, expression composition и вызовы `std/string` с несколькими типами аргументов.
-- `tasks/large-tasks.json`: 40 scenario-sized программ с typed program blueprints.
+DEAL and Deal UI are transpiler/compiler projects. This repository must not duplicate their parsers,
+type systems or semantic checks.
 
-Partial HIR — companion-представление, потому что production raw AST DEAL immutable и не допускает holes. Оно поддерживает expression nodes (`LiteralExpr`, `BinaryExpr`, `CallExpr`) и typed program blueprints с holes в операторах, условиях, константах, collections и statement expressions. Финальный результат обязательно принимается production parser/typechecker. Следующим шагом HIR можно перенести в сам DEAL repo и lowering делать напрямую в raw AST/semantic IR, не меняя model adapter или benchmark protocol.
+## Agent Surface
 
-## Наборы задач
+The rich compiler API remains internal. For each round the model receives only:
 
-Малый `tasks/tasks.json` содержит четыре быстрых вертикальных теста. Расширенный `tasks/large-tasks.json` содержит 40 программ по пять вариантов в восьми семействах:
+- the user instruction;
+- a source digest and short revision-local aliases;
+- the minimum dependency cone needed for the current change;
+- one currently authorized tool with a strict schema;
+- structured diagnostics for a rejected unit, when repair is required.
 
-- `physics-engine` — дискретный 1D integrator состояния;
-- `collision` — 2D AABB collision detection;
-- `particle-system` — обновление массива частиц и checksum;
-- `tic-tac-toe` — полный поиск победителя по строкам, столбцам и диагоналям;
-- `cellular-automaton` — правила рождения/выживания Game of Life;
-- `grid-pathfinding` — dynamic-programming path count с препятствием;
-- `inventory-economy` — line totals, subtotal и threshold discount;
-- `job-scheduler` — FIFO admission в ограниченный time budget.
+Greenfield generation uses source-free constructor transactions such as
+`construct_apply_deal_batch` and `construct_apply_deal_ui_changes`. Constructor calls use short local
+handles and typed operands. They are lowered to canonical source by the compiler and cannot inject
+raw source text.
 
-Программы имеют 23–30 строк и 2–7 typed semantic holes. Набор воспроизводимо генерируется командой `npm run tasks:generate`; `npm run benchmark:large` прогоняет все 80 direct/semantic результатов через production DEAL compiler и runtime oracle.
+During repair, valid independent operations remain staged. The model receives only the rejected
+slot and its dependency group through `construct_patch_repair_slot`; accepted siblings are not
+regenerated. Malformed provider tool calls are transport failures and do not mutate the workspace or
+consume semantic-repair budget.
 
-## Требования
+Natural-language modernization uses the same protocol. DEAL changes are applied first. Deal UI is
+revisited only when presentation changes or the AppInterface fingerprint changes. The final source
+pair is committed atomically.
 
-- Node.js 20+
-- JDK 25
-- локальный DEAL compiler checkout. По умолчанию используется найденный в этой среде `/Users/egavrin/Documents/Codex/2026-09-02/new-chat/work/deal-reference`; для другой машины задайте `DEAL_REPO`.
+## Repository Layout
 
-Если compiler classes ещё не собраны, setup использует его `build/prod-sources.txt`. Java bridge компилируется автоматически в локальную `.cache/`.
-
-## Быстрый offline A/B запуск
-
-Replay adapter не оценивает качество модели — он детерминированно проверяет весь harness, streaming, production compile и functional oracle без API key.
-
-```bash
-cd streaming-compiler
-DEAL_REPO=/path/to/deal npm test
-DEAL_REPO=/path/to/deal npm run benchmark:replay
+```text
+java/streaming/compiler/
+  CanonicalRefinementSession.java   generation and modernization state machine
+  ConstructionSurface.java         compact model-facing construction tools
+bridge/
+  CanonicalCompilerBridge.java      portable adapter to DEAL and Deal UI compiler APIs
+  CanonicalRefinementSessionTest.java
+src/                                original benchmark harness and provider adapters
+test/                               Node.js integration and benchmark tests
+tasks/                              deterministic benchmark tasks
+reports/                            recorded benchmark results
+COMPILER-CONSTRUCTION-V1.md         source-free construction protocol
+DIAGNOSTICS-AUDIT-2026-09-06.md     compiler diagnostic audit
+AGENTS.md                           repository invariants
 ```
 
-Эквивалентная явная команда:
+The `src/` direct-vs-semantic benchmark predates the canonical application protocol. It remains a
+useful experimental harness, but it is not the product architecture.
+
+## Requirements
+
+- Node.js 20 or newer for the benchmark and Java test harness;
+- JDK 25 for the current compiler bridge tests;
+- local checkouts of the DEAL and Deal UI repositories for canonical integration tests.
+
+Use explicit paths so test runs do not depend on one developer's directory layout:
 
 ```bash
-node src/cli.js benchmark \
-  --adapter replay \
-  --modes direct,semantic \
-  --stream \
-  --deal-repo /path/to/deal \
-  --output reports/replay.json
-```
-
-Для короткого live smoke можно выбрать одну или несколько задач:
-
-```bash
-node src/cli.js benchmark --adapter openrouter --task hello-literal --modes direct,semantic --stream
-```
-
-Большой suite можно запускать семействами, чтобы не упираться в rate limits бесплатного provider:
-
-```bash
-node src/cli.js benchmark \
-  --adapter openrouter \
-  --tasks tasks/large-tasks.json \
-  --family physics-engine,tic-tac-toe \
-  --modes direct,semantic \
-  --stream
-```
-
-Каждый model request по умолчанию ограничен 120 секундами. Лимит настраивается через `DEAL_MODEL_TIMEOUT_MS`.
-Report checkpoint перезаписывается после каждого завершённого `(task, mode)`. Если длинный live run
-оборвался, повторите ту же команду с `--resume`: уже сохранённые пары будут пропущены.
-OpenRouter adapter также задаёт `reasoning.effort=low`, исключает reasoning deltas из ответа и ограничивает completion 2048 токенами. Для экспериментов доступны `DEAL_REASONING_EFFORT` и `DEAL_MAX_OUTPUT_TOKENS`.
-Transient ответы 429/502/503/504 повторяются до трёх раз с exponential backoff или серверным `Retry-After`; число повторов задаёт `DEAL_MODEL_RETRIES`. Эти транспортные повторы не считаются model repair iterations. Generated artifact ограничен 30 секундами выполнения; лимит настраивается через `DEAL_RUNTIME_TIMEOUT_MS`, а timeout классифицируется как functional failure.
-
-## OpenRouter
-
-```bash
-export OPENROUTER_API_KEY='...'
 export DEAL_REPO=/path/to/deal
-node src/cli.js benchmark --adapter openrouter --modes direct,semantic --stream
+export DEAL_UI_REPO=/path/to/deal-ui
+npm test
 ```
 
-Модель по умолчанию — `cohere/north-mini-code:free`. Любая OpenRouter-модель конфигурируется без изменения кода:
+Quick deterministic benchmark smoke:
 
 ```bash
-export DEAL_MODEL='cohere/north-mini-code:free'
-export OPENROUTER_BASE_URL='https://openrouter.ai/api/v1'
-export OPENROUTER_HTTP_REFERER='https://your-project.example'
+npm run benchmark:replay
 ```
 
-Например, для DeepSeek V4 Flash без reasoning-токенов:
+The replay adapter validates the harness without evaluating model quality. Live benchmarks require
+a configured provider adapter and must record the model, provider route, prompt/protocol versions,
+token usage and latency.
+
+## Compiler Construction Tests
+
+The canonical Java suite covers:
+
+- source-free DEAL and Deal UI construction;
+- strict issued-tool grants and stale-digest rejection;
+- atomic transaction rollback;
+- staged repair slots and dependency groups;
+- scoped context expansion without sibling write access;
+- UI subtree replacement;
+- AppInterface changes and cross-artifact validation;
+- transport failure separation from semantic repair;
+- multi-revision application development.
+
+The portable bridge tests are exercised by `npm test`; the focused Java entry point is
+`bridge/CanonicalRefinementSessionTest.java`.
+
+## Legacy Benchmark Harness
+
+The original benchmark compares direct DEAL source generation with typed semantic completion using
+the same production compiler/runtime oracle. It includes replay, OpenRouter and local Ollama model
+adapters, 40 generated tasks, token accounting and stored reports.
+
+Examples:
 
 ```bash
-export DEAL_MODEL='deepseek/deepseek-v4-flash'
-export DEAL_REASONING_EFFORT='none'
-node src/cli.js benchmark \
-  --adapter openrouter \
-  --tasks tasks/large-tasks.json \
-  --modes direct,semantic \
-  --stream \
-  --output reports/deepseek-v4-flash-live-40.json
-```
-
-Результаты фактического прогона от 3 сентября 2026 находятся в
-`reports/deepseek-v4-flash-results.md`. Там отдельно сохранён naive direct без syntax primer,
-чтобы изменение baseline было прозрачным.
-
-Semantic mode использует streaming tool call `select_choices({choices: string[]})`. Parser аргументов извлекает каждый законченный choice ID ещё до закрытия всего JSON. Stable IDs позволяют модели предложить несколько следующих depth-first решений за один round-trip; compiler применяет longest valid prefix.
-
-Для OpenRouter-моделей с поддержкой strict structured output можно включить тот же
-single-choice protocol, что используется в локальном Ollama:
-
-```bash
-export DEAL_SEMANTIC_PROTOCOL=single-choice-json-schema
-```
-
-Текущий список допустимых choice IDs будет передан как динамический JSON Schema enum.
-
-Чтобы подключить локальный Qwen/Cortex или другой endpoint, достаточно создать adapter от `OpenAICompatibleModelAdapter` с собственными `baseUrl`, `model` и key либо реализовать два async-stream метода `streamDirect()`/`streamSemantic()`. Compiler core и benchmark не зависят от провайдера.
-
-## Локальный Ollama + Qwen
-
-```bash
-ollama pull qwen2.5-coder:0.5b
-export DEAL_MODEL='qwen2.5-coder:0.5b'
-export DEAL_TEMPERATURE=0
-export DEAL_SEED=42
-node src/cli.js benchmark \
-  --adapter ollama \
-  --tasks tasks/large-tasks.json \
-  --modes direct,semantic \
-  --stream \
-  --resume \
-  --output reports/qwen2.5-coder-0.5b-live-40.json
-```
-
-`OLLAMA_BASE_URL` по умолчанию равен `http://127.0.0.1:11434/v1`. Direct mode использует
-OpenAI-compatible streaming endpoint. Semantic mode использует нативный `/api/chat` и передаёт
-текущий список choice IDs как JSON Schema enum в `format`, чтобы decoder не мог вывести
-несуществующую операцию. Local usage имеет API cost 0; wall-clock и токены измеряются так же,
-как для OpenRouter.
-
-Для чистого first-attempt benchmark без повторной генерации всей HIR trajectory:
-
-```bash
-node src/cli.js benchmark \
-  --adapter ollama \
-  --tasks tasks/large-tasks.json \
-  --modes semantic \
-  --max-repairs 0 \
-  --max-rounds 8 \
-  --stream
-```
-
-Полный локальный A/B для обеих загруженных малых моделей воспроизводится одной командой:
-
-```bash
+npm run benchmark:large
+npm run benchmark:openrouter
 npm run benchmark:local-small
 ```
 
-### Первичные локальные результаты
+Recorded results live under [`reports/`](reports/). Treat them as protocol experiments, not as
+current product acceptance results.
 
-На 40 задачах, при temperature 0 / seed 42 и без repair, direct generation не решила ни
-одной задачи у обеих моделей. Semantic generation дала 10/40 для Qwen 0.5B и 13/40 для
-Qwen 1.5B; все 80 semantic programs прошли production compile. Локальный API cost равен
-нулю. Semantic использует больше input tokens и round-trips, но в 4–7 раз меньше output
-tokens. Полные latency percentiles, token accounting, family breakdown и protocol ablations
-находятся в [`reports/local-small-model-results.md`](reports/local-small-model-results.md).
+## Current Limitations
 
-### OpenRouter Gemma 4 26B-A4B IT
+- The canonical Agent Surface is still being optimized for fewer input tokens and model round trips.
+- Complex held-out applications do not yet meet a published 95% final-success gate.
+- Provider tool-call implementations differ; schema and transport failures require dedicated
+  compatibility testing.
+- The Android host currently embeds the compiler stack through a pinned DEX bridge. A standalone
+  process/service boundary remains future work.
+- Functional request fidelity and visual quality require separate evaluation in addition to compiler
+  acceptance.
 
-Чистый live A/B на тех же 40 задачах, без repairs, дал 25/40 functional@1 для direct и
-40/40 для semantic compiler. Semantic достиг compile@1 100%, использовал 10.64 раза меньше
-output tokens и стоил $0.006665 против $0.009569 для direct, но из-за 4.5 последовательных
-strict-enum запросов на задачу был медленнее: mean 8.62 против 7.06 секунды. Полная таблица,
-разбивка по семействам и сравнение с DeepSeek находятся в
-[`reports/gemma-4-26b-a4b-it-results.md`](reports/gemma-4-26b-a4b-it-results.md).
-
-## Метрики
-
-JSON report содержит сырые результаты по каждому `(task, mode)` и агрегацию:
-
-- `compileAt1`, `functionalAt1` — доля первых попыток, прошедших production compile / runtime oracle;
-- `syntaxFailures`, `semanticFailures`, `functionalFailures`;
-- `rejectedChoices` и `rejectedPrefixes`;
-- `repairIterations`, `apiRoundTrips`, `outputTokens`;
-- `inputTokens`, `totalTokens`, `reasoningTokens`, `apiCostUsd` из provider usage;
-- `neuralDecisionsPerSuccessfulProgram` — в semantic mode число принятых model choices; в direct baseline используется число output tokens, поскольку source tokens и есть последовательность neural decisions;
-- `averageWallClockMs` — полное time-to-success;
-- `averageTimeToFirstValidProgramMs` — первое время, когда полный compiler + functional oracle увидели корректную программу. В streaming direct это может быть checkpoint до закрытия HTTP stream; в semantic — момент первого успешного lowering/compile.
-
-`compilerDecisions` отдельно показывает автоматически заполненные однозначные holes и не включается в neural decisions.
-
-## Интерпретация
-
-Replay report нужен как smoke baseline, не как научный результат. Для сравнения модели запускайте несколько повторов live adapter, фиксируйте model ID/provider routing и сохраняйте каждый JSON report. Free OpenRouter routing и network latency могут меняться, поэтому для уверенного сравнения нужны повторы, confidence intervals и одинаковый порядок/температура задач. Текущий prototype намеренно измеряет `@1`, а repair — отдельно, не подмешивая исправленный результат в first-attempt success.
-
-## Ограничения прототипа
-
-- Semantic catalog остаётся task-scoped. Большие задачи используют compiler-owned program blueprints, поэтому они проверяют constrained semantic completion сложной программы, а не генерацию всей архитектуры приложения с чистого листа.
-- Prefix bridge безопасно отвергает только лексически невозможное продолжение; большинство parser EOF diagnostics считаются потенциально исправимыми дальнейшими deltas. Полный typechecker запускается на структурно завершённых checkpoints и финале.
-- Production parser рассчитан на полные файлы и на некоторых незавершённых assignment-префиксах может бросить внутреннее исключение вместо diagnostics. Bridge изолирует этот случай как «пока не классифицируемый префикс»; lexer продолжает работать, а финальный production compile остаётся обязательным oracle.
-- Functional oracle сейчас — точный stdout и exit code 0 на JS backend. Для более широкого suite стоит добавить generated test modules/property oracles.
-- OpenRouter tool-stream shapes могут различаться по provider. Adapter поддерживает стандартные OpenAI `delta.tool_calls[].function.arguments` и fallback JSON в text content.
+See [COMPILER-CONSTRUCTION-V1.md](COMPILER-CONSTRUCTION-V1.md) for the constructor wire protocol and
+[AGENTS.md](AGENTS.md) for non-negotiable architecture boundaries.
