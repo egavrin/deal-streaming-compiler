@@ -74,7 +74,7 @@ final class ConstructionSurface {
             Compact inline operands are preferred: {"text":"Ready"} for literal text including empty text,
             {"path":["state","count"]} for a field, {"path":["action","value"]} for action data.
             These objects replace redundant text/path calls and can be used in fields[].value or binary operands.
-            Prefer inline numbers/booleans over separate calls. Display strings still use the text constructor;
+            Prefer inline numbers/booleans over separate calls. Display strings use {"text":"..."} or a text constructor;
             strings in operand positions are always handles, never expressions or literals.
             Prefer path(parts=["state","count"]) over reference+field. Parts are identifiers, not source.
             returnRecord(fields=...) constructs a complete BLOCK returning a record; prefer it to record+return+block.
@@ -89,7 +89,10 @@ final class ConstructionSurface {
             local/assign/return/if/while build statements; block groups statement handles. declareRecord and
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
             Scalar type names are int, number, boolean, string, bytes and void (return type only).
-            Other type names must name declared nominal classes; use boolean, not bool.
+            Nominal type names must name declared classes; use boolean, not bool. Array types use T[], for example int[] or Item[].
+            Use emptyArray for an array value, record for a nominal object value, never a numeric placeholder or a declaration handle.
+            For collections, use a typed fresh local with emptyArray, populate via index+assign inside its block, then return its path.
+            A declaration default must match its field type; array fields can default to emptyArray. Do not invent wrapper classes for arrays.
             In transaction arguments, all declaration/body/source/expression fields contain result handles, NOT code.
             Supporting declarations are declaration handles. Body slots need block or uiBody handles.
             An initialState body must contain a return statement for a record matching the proposed AppState.
@@ -98,7 +101,7 @@ final class ConstructionSurface {
             can read them if needed, but never grants permission to change them.
             Framework behavior contract: every UI input has a nominal action record declared with declareRecord.
             Its handler MUST use declareUpdate, parameters state:AppState and action:YourActionType, returns:AppState.
-            Read state fields through reference(name=state) and field(object=<state handle>, name=<field name>).
+            Read state fields through inline {"path":["state","fieldName"]}.
             State and action are borrowed: never assign to them. Construct and return replacement state instead,
             preserving unchanged fields. A void function or assignment to a bare state field is NOT an update.
             When the authorized tool accepts actionHandlers, supply each action/handler pair there using declaration handles.
