@@ -487,7 +487,7 @@ public final class CanonicalRefinementSession {
             String ticket = ConstructionRepairWorkspace.callsDigest(existing);
             var ticketSchema = Map.of("type", "string", "const", ticket);
             var stagedTools = new ArrayList<Map<String, Object>>();
-            if (existing.items().size() < 512) stagedTools.add(tool("stage_constructor_calls", "Append between one and sixteen calls. Never include more than sixteen calls in this response; use another staged response for the next portion. Existing handles remain available and no app is published.",
+            if (existing.items().size() < 512) stagedTools.add(tool("stage_constructor_calls", "Append between one and twelve calls. You MUST emit at most twelve constructors in this response; stop and continue remaining work in the next compiler-issued request. Existing handles remain available and no app is published.",
                     objectSchema(Map.of("ticket", ticketSchema, "calls", callsSchema))));
             if (!existing.items().isEmpty()) stagedTools.add(tool("finish_constructor_calls", "Apply the original transaction using all staged calls. Do not repeat call payloads.",
                     objectSchema(Map.of("ticket", ticketSchema, "arguments", properties.get("arguments")))));

@@ -1039,14 +1039,28 @@ public final class CanonicalRefinementSessionTest {
         var portionCalls = CompilerProtocolJson.requireObject(field(portionProperties, "calls"), "calls");
         check(CompilerProtocolJson.intField(portionCalls, "maxItems") == 16,
                 "each compiler-issued staging response must be structurally limited to sixteen calls");
-        check(stringField(portionTool, "description").contains("Never include more than sixteen"),
-                "provider-visible staging guidance must retain the hard portion boundary");
+        check(stringField(portionTool, "description").contains("MUST emit at most twelve")
+                && stringField(object(portionRequest), "instructions").contains("MUST contain 1..12 calls"),
+                "provider-visible staging target leaves headroom below the hard admission bound");
         check(CompilerProtocolJson.intField(object(portionRequest), "maxOutputTokens") == 8192,
                 "staged construction must use the bounded output ceiling rather than the complete transaction ceiling");
         check(!stringField(object(portionRequest), "instructions").contains("construct_apply_deal_batch")
                 && !stringField(object(portionRequest), "instructions").contains("same batch"),
                 "portion instructions must not contain obsolete single-batch delivery rules");
         String firstTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of()));
+        for (int size = 13; size <= 16; size++) {
+            var headroom = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3)
+                    .useConstructionApi().withConstructionPortions();
+            headroom.nextRequestJson();
+            var calls = new java.util.ArrayList<Map<String, Object>>();
+            for (int i = 0; i < size; i++) calls.add(cc("margin" + i, "integer", Map.of("value", i)));
+            String next = headroom.acceptToolCallJson("stage_constructor_calls",
+                    CompilerProtocolJson.encode(Map.of("ticket", firstTicket, "calls", calls)));
+            check(next.contains("\\\"callCount\\\":" + size) && next.contains("\\\"id\\\":\\\"margin0\\\""),
+                    "admitted headroom retains immutable handles in the continuation request");
+            check(stringField(object(next), "instructions").contains("MUST contain 1..12 calls"),
+                    "continuation keeps the bounded model-facing target");
+        }
         var oversizedPortion = new java.util.ArrayList<Map<String, Object>>();
         for (int i = 0; i < 17; i++) oversizedPortion.add(cc("oversized" + i, "integer", Map.of("value", i)));
         String oversizedValidation = portions.validateToolCallsJson(CompilerProtocolJson.encode(List.of(
