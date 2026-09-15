@@ -528,8 +528,12 @@ public final class CanonicalRefinementSession {
         request.put("reasoningEffort", forcedArtifact.equals("dealui") ? uiReasoningEffort : dealReasoningEffort);
         request.put("input", input);
         request.put("tools", tools);
+        // Reasoning and tool arguments share the provider output budget. Keep the sixteen-call
+        // staging cap while reserving bounded headroom for reasoning before argument emission.
         request.put("maxOutputTokens", tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_batch", "apply_deal_batch").contains(tool.get("name")))
-                ? 32768 : tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_ui_changes", "apply_deal_ui_changes").contains(tool.get("name"))) ? 16384 : 8192);
+                ? 32768 : tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_ui_changes", "apply_deal_ui_changes").contains(tool.get("name"))) ? 16384
+                : tools.stream().anyMatch(tool -> tool.get("name").equals("stage_constructor_calls"))
+                    && !request.get("reasoningEffort").equals("none") ? 16384 : 8192);
         request.put("round", rounds + 1);
         request.put("semanticRepairs", semanticRepairs);
         request.put("repairProtocol", repairV2 ? "repair-workspace-v2" : "repair-workspace-v1");
