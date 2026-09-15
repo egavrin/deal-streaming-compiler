@@ -385,6 +385,7 @@ public final class CanonicalRefinementSession {
     private int writeRounds;
     private static final int MAX_CONSTRUCTION_ROUNDS = 24;
     private boolean lastConstructionProgress;
+    private int idempotentStagedDuplicates;
     private String roundTerminationReason = "";
     private int semanticRepairs;
     private int dealSemanticRepairs;
@@ -541,6 +542,7 @@ public final class CanonicalRefinementSession {
                 ? 32768 : tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_ui_changes", "apply_deal_ui_changes").contains(tool.get("name"))) ? 16384 : 8192);
         request.put("round", rounds + 1);
         request.put("constructionRoundBudget", constructionRoundBudget());
+        request.put("idempotentStagedDuplicates", idempotentStagedDuplicates);
         request.put("semanticRepairs", semanticRepairs);
         request.put("repairProtocol", repairV2 ? "repair-workspace-v2" : "repair-workspace-v1");
         request.put("scopeExpansions", repairScopeExpansions);
@@ -835,10 +837,21 @@ public final class CanonicalRefinementSession {
         }
         if (name.equals("stage_constructor_calls")) {
             var existing = stagedCalls == null ? CanonicalJson.arr(List.of()) : stagedCalls.calls();
+            var additions = CompilerProtocolJson.requireArray(field(arguments, "calls"), "calls");
+            int duplicates = 0;
             try {
-                stagedCalls = ConstructionRepairWorkspace.stageCalls(existing, string(arguments, "ticket"),
-                    CompilerProtocolJson.requireArray(field(arguments, "calls"), "calls"),
-                    new CanonicalConstruction(uiConstructionTools.contains(portionTool.get("name"))));
+                if (!ConstructionRepairWorkspace.callsDigest(existing).equals(string(arguments, "ticket")))
+                    throw new IllegalArgumentException("Stale constructor staging digest");
+                var acceptedById = new LinkedHashMap<String, CanonicalJson.Value>();
+                for (var raw : existing.items()) acceptedById.put(string(CompilerProtocolJson.requireObject(raw, "call"), "id"), raw);
+                var newCalls = new ArrayList<CanonicalJson.Value>();
+                for (var raw : additions.items()) {
+                    var prior = acceptedById.get(string(CompilerProtocolJson.requireObject(raw, "call"), "id"));
+                    if (prior != null && CompilerProtocolJson.encode(prior).equals(CompilerProtocolJson.encode(raw))) duplicates++;
+                    else newCalls.add(raw); // Differing collisions remain subject to the existing atomic validator.
+                }
+                if (!newCalls.isEmpty()) stagedCalls = ConstructionRepairWorkspace.stageCalls(existing, string(arguments, "ticket"),
+                        CanonicalJson.arr(newCalls), new CanonicalConstruction(uiConstructionTools.contains(portionTool.get("name"))));
             } catch (IllegalArgumentException failure) {
                 rejectConstructorPortion(name, arguments, failure);
                 return;
@@ -846,7 +859,9 @@ public final class CanonicalRefinementSession {
             stagedSelections.clear();
             portionDiagnostic = Map.of();
             lastConstructionProgress = stagedCalls.calls().items().size() > existing.items().size();
-            addTranscript(name, Map.of("stage", "constructor-staging", "calls", stagedCalls.calls().items().size()));
+            idempotentStagedDuplicates += duplicates;
+            addTranscript(name, Map.of("stage", "constructor-staging", "calls", stagedCalls.calls().items().size(),
+                    "idempotentDuplicates", duplicates, "newCalls", stagedCalls.calls().items().size() - existing.items().size()));
             return;
         }
         if (name.equals("finish_constructor_calls")) {
@@ -981,6 +996,7 @@ public final class CanonicalRefinementSession {
         result.put("dealUi", status == Status.COMPLETE ? dealUi : previousDealUi);
         result.put("rounds", rounds);
         result.put("constructionRoundBudget", constructionRoundBudget());
+        result.put("idempotentStagedDuplicates", idempotentStagedDuplicates);
         result.put("semanticRepairs", semanticRepairs);
         result.put("argumentRepairRounds", argumentRepairRounds);
         result.put("repairMetrics", Map.of(
