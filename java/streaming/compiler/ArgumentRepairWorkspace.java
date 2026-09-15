@@ -9,6 +9,17 @@ import static deal.compiler.CompilerProtocolJson.*;
 /** Unapplied tool arguments. The engine, never the model, chooses the only writable JSON location. */
 final class ArgumentRepairWorkspace {
     record Issue(List<Object> path, Map<?, ?> schema, CanonicalJson.Value actual, boolean remove) {}
+    static final class NonLocalArgumentException extends IllegalArgumentException {
+        final List<Object> path;
+        NonLocalArgumentException(Issue issue) {
+            super("No local argument repair available at " + encode(issue == null ? List.of() : issue.path())
+                    + (issue != null && issue.actual() instanceof CanonicalJson.Arr array
+                        ? "; actualItems=" + array.items().size() + "; minItems=" + issue.schema().get("minItems")
+                            + "; maxItems=" + issue.schema().get("maxItems") : "")
+                    + "; batch replacement is not granted");
+            path = issue == null ? List.of() : List.copyOf(issue.path());
+        }
+    }
     final String toolName;
     private final Map<?, ?> schema;
     private CanonicalJson.Obj candidate;
@@ -269,7 +280,7 @@ final class ArgumentRepairWorkspace {
     private static void requireLocal(Issue issue) {
         if (issue == null || issue.path().isEmpty()
                 || (issue.path().size() == 1 && issue.path().getFirst().equals("calls")))
-            throw new IllegalArgumentException("No local argument repair available; batch replacement is not granted");
+            throw new NonLocalArgumentException(issue);
     }
 
     static Issue locate(CanonicalJson.Value value, Map<?, ?> schema, List<Object> path) {
