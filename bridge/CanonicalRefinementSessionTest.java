@@ -1033,6 +1033,16 @@ public final class CanonicalRefinementSessionTest {
         var portions = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi().withConstructionPortions();
         String portionRequest = portions.nextRequestJson();
         check(toolNames(portionRequest).equals(List.of("stage_constructor_calls")), "portion mode exposes append before finalization");
+        var portionTool = CompilerProtocolJson.requireObject(requireArray(field(object(portionRequest), "tools"), "tools").items().getFirst(), "tool");
+        var portionParameters = CompilerProtocolJson.requireObject(field(portionTool, "parameters"), "parameters");
+        var portionProperties = CompilerProtocolJson.requireObject(field(portionParameters, "properties"), "properties");
+        var portionCalls = CompilerProtocolJson.requireObject(field(portionProperties, "calls"), "calls");
+        check(CompilerProtocolJson.intField(portionCalls, "maxItems") == 16,
+                "each compiler-issued staging response must be structurally limited to sixteen calls");
+        check(stringField(portionTool, "description").contains("Never include more than sixteen"),
+                "provider-visible staging guidance must retain the hard portion boundary");
+        check(CompilerProtocolJson.intField(object(portionRequest), "maxOutputTokens") == 8192,
+                "staged construction must use the bounded output ceiling rather than the complete transaction ceiling");
         check(!stringField(object(portionRequest), "instructions").contains("construct_apply_deal_batch")
                 && !stringField(object(portionRequest), "instructions").contains("same batch"),
                 "portion instructions must not contain obsolete single-batch delivery rules");

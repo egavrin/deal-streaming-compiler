@@ -483,11 +483,11 @@ public final class CanonicalRefinementSession {
             var properties = (Map<?, ?>) ((Map<?, ?>) portionTool.get("parameters")).get("properties");
             var callsSchema = new LinkedHashMap<String, Object>((Map<String, Object>) properties.get("calls"));
             var existing = stagedCalls == null ? CanonicalJson.arr(List.of()) : stagedCalls.calls();
-            callsSchema.put("minItems", 1); callsSchema.put("maxItems", 512 - existing.items().size());
+            callsSchema.put("minItems", 1); callsSchema.put("maxItems", Math.min(16, 512 - existing.items().size()));
             String ticket = ConstructionRepairWorkspace.callsDigest(existing);
             var ticketSchema = Map.of("type", "string", "const", ticket);
             var stagedTools = new ArrayList<Map<String, Object>>();
-            if (existing.items().size() < 512) stagedTools.add(tool("stage_constructor_calls", "Append a small portion, preferably at most sixteen calls. The schema limit reserves room for dependency repair. Existing handles remain available; no app is published.",
+            if (existing.items().size() < 512) stagedTools.add(tool("stage_constructor_calls", "Append between one and sixteen calls. Never include more than sixteen calls in this response; use another staged response for the next portion. Existing handles remain available and no app is published.",
                     objectSchema(Map.of("ticket", ticketSchema, "calls", callsSchema))));
             if (!existing.items().isEmpty()) stagedTools.add(tool("finish_constructor_calls", "Apply the original transaction using all staged calls. Do not repeat call payloads.",
                     objectSchema(Map.of("ticket", ticketSchema, "arguments", properties.get("arguments")))));
@@ -694,6 +694,7 @@ public final class CanonicalRefinementSession {
             String originalTool = argumentRepair.toolName;
             var repaired = argumentRepair.candidate();
             argumentRepair = null;
+            admitRepairedStageDependencies(originalTool, repaired);
             try {
                 return acceptToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of("name", originalTool, "arguments", repaired))));
             } catch (IllegalArgumentException rejected) {
@@ -717,6 +718,23 @@ public final class CanonicalRefinementSession {
                     CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
         }
         return status == Status.REQUEST ? nextRequestJson() : resultJson();
+    }
+
+    private void admitRepairedStageDependencies(String name, CanonicalJson.Obj repaired) {
+        if (!name.equals("stage_constructor_calls")) return;
+        int repairedSize = CompilerProtocolJson.requireArray(field(repaired, "calls"), "calls").items().size();
+        issuedTools = issuedTools.stream().map(tool -> {
+            if (!name.equals(tool.get("name"))) return tool;
+            var updatedTool = new LinkedHashMap<String, Object>(tool);
+            var parameters = new LinkedHashMap<String, Object>((Map<String, Object>) tool.get("parameters"));
+            var properties = new LinkedHashMap<String, Object>((Map<String, Object>) parameters.get("properties"));
+            var calls = new LinkedHashMap<String, Object>((Map<String, Object>) properties.get("calls"));
+            calls.put("maxItems", repairedSize);
+            properties.put("calls", calls);
+            parameters.put("properties", properties);
+            updatedTool.put("parameters", parameters);
+            return updatedTool;
+        }).toList();
     }
 
     private void validateIssuedCall(String name, CanonicalJson.Obj arguments) {
