@@ -61,6 +61,7 @@ public final class CanonicalRefinementSessionTest {
 
     public static void main(String[] args) {
         checkedAgentSemanticsMatchesCompilerPack();
+        hostCapabilityProfileIsVersionedAndCompilerOwned();
         sourceRepairInstructionsMatchTools();
         constructorPortionsAreAtomicAndPreserveForwardHandles();
         portionRepairCanAddDependencyAtTransmissionTarget();
@@ -134,6 +135,16 @@ public final class CanonicalRefinementSessionTest {
         } catch (IllegalArgumentException expected) {
             check(expected.getMessage().contains("coverage"), "coverage mismatch must be explicit");
         }
+    }
+
+    private static void hostCapabilityProfileIsVersionedAndCompilerOwned() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a field visit", 12, 3)
+                .useConstructionApi().withConstructionPortions().withHostCapabilityProfile("android-host-effects-v1");
+        String instructions = stringField(object(session.nextRequestJson()), "instructions");
+        check(instructions.contains("PlatformHostAction") && instructions.contains("calendar.remove-owned"),
+                "staged construction must retain compiler-owned host capability semantics");
+        expectRejected(() -> CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a field visit", 12, 3)
+                .useConstructionApi().withHostCapabilityProfile("caller-authored"));
     }
 
     private static void constructorPortionsAreAtomicAndPreserveForwardHandles() {
