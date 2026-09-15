@@ -627,6 +627,9 @@ public final class CanonicalRefinementSession {
         try {
             checkedToolCalls(callsJson);
             return CompilerProtocolJson.encode(Map.of("valid", true));
+        } catch (ArgumentRepairWorkspace.NonLocalArgumentException failure) {
+            return CompilerProtocolJson.encode(Map.of("valid", false, "retryable", false,
+                    "code", "SC1022", "path", failure.path, "error", failure.getMessage()));
         } catch (IllegalArgumentException failure) {
             return CompilerProtocolJson.encode(Map.of("valid", false, "error", failure.getMessage()));
         }

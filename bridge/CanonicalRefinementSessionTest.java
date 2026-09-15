@@ -1047,6 +1047,14 @@ public final class CanonicalRefinementSessionTest {
                 && !stringField(object(portionRequest), "instructions").contains("same batch"),
                 "portion instructions must not contain obsolete single-batch delivery rules");
         String firstTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of()));
+        var oversizedPortion = new java.util.ArrayList<Map<String, Object>>();
+        for (int i = 0; i < 17; i++) oversizedPortion.add(cc("oversized" + i, "integer", Map.of("value", i)));
+        String oversizedValidation = portions.validateToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "stage_constructor_calls", "arguments", Map.of("ticket", firstTicket, "calls", oversizedPortion)))));
+        check(oversizedValidation.contains("\"code\":\"SC1022\"") && oversizedValidation.contains("\"retryable\":false")
+                && oversizedValidation.contains("\"path\":[\"calls\"]") && oversizedValidation.contains("actualItems=17")
+                && oversizedValidation.contains("maxItems=16"), "non-local oversized argument must terminate with its exact bound and path");
+        check(portionRequest.equals(portions.nextRequestJson()), "non-local argument rejection preserves all compiler state");
         var incompleteFoundation = new java.util.ArrayList<Map<String, Object>>(foundation);
         incompleteFoundation.set(incompleteFoundation.size() - 1, cc("init", "block", Map.of("statements", List.of())));
         portionRequest = portions.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", firstTicket, "calls", incompleteFoundation)));
