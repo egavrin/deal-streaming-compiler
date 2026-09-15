@@ -56,6 +56,10 @@ export class CanonicalCompilerClient {
     return this.#invoke("handshake", {}, []);
   }
 
+  async repairDiagnostics() {
+    return this.#invoke("repair-diagnostics", {}, []);
+  }
+
   async queryDealModule(source) {
     return this.#invoke("query-deal-module", { deal: source }, ["deal"]);
   }

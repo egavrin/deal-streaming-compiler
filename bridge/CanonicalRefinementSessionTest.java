@@ -22,7 +22,7 @@ public final class CanonicalRefinementSessionTest {
             """;
     private static final String PACK = """
             pack version "test-v1";
-            export class ColumnProps {}
+            export class ColumnProps { vertical: string = "top"; wrap: boolean = true; fraction: number = 0.5; }
             export class TextProps { value: string; }
             export class ButtonProps { text: string; onClick?: Action; }
             export class ClockProps { onTick: Action; }
@@ -45,9 +45,34 @@ public final class CanonicalRefinementSessionTest {
 
     private CanonicalRefinementSessionTest() {}
 
+    private static void sourceRepairInstructionsMatchTools() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3)
+                .withRepairProtocol("repair-workspace-v2");
+        session.nextRequestJson();
+        String rejected = session.acceptToolCallJson("apply_deal_foundation", CompilerProtocolJson.encode(Map.of(
+                "appStateDeclaration", "export class AppState { value: int = 0; }",
+                "initialStateBody", "return {value: missing};",
+                "supportingDeclarations", List.of(), "capabilities", List.of())));
+        check(toolNames(rejected).contains("apply_repair_transaction"), "source generation must retain source repair tools");
+        String instructions = stringField(object(rejected), "instructions");
+        check(instructions.contains("source strings") && !instructions.contains("construct_")
+                && !instructions.contains("Never output code"), "source repair instructions must agree with source payload schemas");
+    }
+
     public static void main(String[] args) {
+        checkedAgentSemanticsMatchesCompilerPack();
+        sourceRepairInstructionsMatchTools();
+        constructorPortionsAreAtomicAndPreserveForwardHandles();
+        portionRepairCanAddDependencyAtTransmissionTarget();
+        constructorStagingConsumesInteractionBudget();
+        constructionProvenanceIsStructural();
+        uiDiagnosticRetainsAstOwner();
+        uiAstSupportsCompactOperands();
         argumentRepairIsScopedAndTransactional();
+        constructionDependenciesIgnoreLiteralNames();
         sourceFreeConstructionCompilesAndRepairs();
+        constructorLocalReferenceRepairAndCycleDetection();
+        sourceFreeAgentAllocatesUiRepairSlot();
         greenfieldHostReadinessGatesUi();
         diagnosticCompactionPreservesLocationsAndEvidence();
         inspectChangeUnlocksCompilerOwnedCone();
@@ -87,6 +112,230 @@ public final class CanonicalRefinementSessionTest {
         System.out.println("CanonicalRefinementSessionTest: all tests passed");
     }
 
+    private static void checkedAgentSemanticsMatchesCompilerPack() {
+        String pack = PACK + "\nexport class ThemeStyle { value: string = \"clean\"; }\n"
+                + "export token themeClean: ThemeStyle = { value: \"clean\" };\n";
+        String manifest = """
+                {"version":"deal-studio-agent-semantics-v1","packVersion":"test-v1",
+                 "themeTokens":["themeClean"],"components":{
+                   "Column":{"purpose":"Layout","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":["Text"],"constraints":[]},
+                   "Text":{"purpose":"Text","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":[],"constraints":[]},
+                   "Button":{"purpose":"Action","preferWhen":[],"avoidWhen":[],"visualWeight":"medium","commonSiblings":[],"constraints":[]},
+                   "Clock":{"purpose":"Clock ingress","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":[],"constraints":[]}},
+                 "globalRules":["Use typed contracts"]}
+                """;
+        new CanonicalRefinementSession(DEAL, UI, pack, "./ui.pack", "Refine layout", 4, 1)
+                .withAgentSemantics(manifest);
+        try {
+            new CanonicalRefinementSession(DEAL, UI, pack, "./ui.pack", "Refine layout", 4, 1)
+                    .withAgentSemantics(manifest.replace("\"Button\":{\"purpose\":\"Action\"",
+                            "\"Unknown\":{\"purpose\":\"Action\""));
+            throw new AssertionError("agent semantics must have exact compiler component coverage");
+        } catch (IllegalArgumentException expected) {
+            check(expected.getMessage().contains("coverage"), "coverage mismatch must be explicit");
+        }
+    }
+
+    private static void constructorPortionsAreAtomicAndPreserveForwardHandles() {
+        var empty = CanonicalJson.arr(List.of());
+        var frontend = new deal.ui.CanonicalConstruction(false);
+        var firstCalls = requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(List.of(
+                cc("body", "return", Map.of("value", "later"))))), "calls");
+        var first = deal.compiler.ConstructionRepairWorkspace.stageCalls(empty,
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(empty), firstCalls, frontend);
+        check(first.summaries().getFirst().get("dependencies").toString().contains("later"), "staging reports unresolved forward handles without pretending the program compiles");
+        var secondCalls = requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(List.of(
+                cc("later", "integer", Map.of("value", 7))))), "calls");
+        expectRejected(() -> deal.compiler.ConstructionRepairWorkspace.stageCalls(first.calls(), "stale", secondCalls, frontend));
+        expectRejected(() -> deal.compiler.ConstructionRepairWorkspace.stageCalls(first.calls(), first.digest(), firstCalls, frontend));
+        var invalidCalls = requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(List.of(
+                cc("later", "integer", Map.of("value", 7)), cc("bad", "boolean", Map.of("value", 1))))), "calls");
+        expectRejected(() -> deal.compiler.ConstructionRepairWorkspace.stageCalls(first.calls(), first.digest(), invalidCalls, frontend));
+        check(first.calls().items().size() == 1 && first.digest().equals(deal.compiler.ConstructionRepairWorkspace.callsDigest(first.calls())), "rejected portion cannot change prior staged calls");
+        var second = deal.compiler.ConstructionRepairWorkspace.stageCalls(first.calls(), first.digest(), secondCalls, frontend);
+        String source = frontend.build(object(CompilerProtocolJson.encode(Map.of("calls", second.calls(), "result", "body"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(source.equals("return 7;"), "handles retain their meaning across portions and final compilation resolves dependencies");
+        var oversized = java.util.stream.IntStream.range(0, 17).mapToObj(i -> cc("v" + i, "integer", Map.of("value", i))).toList();
+        check(deal.compiler.ConstructionRepairWorkspace.stageCalls(empty,
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(empty),
+                requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(oversized)), "calls"), frontend).calls().items().size() == 17,
+                "transmission target must not prevent repair from adding a seventeenth dependency");
+        var staged = empty;
+        for (int offset = 0; offset < 512; offset += 16) {
+            final int start = offset;
+            var portion = java.util.stream.IntStream.range(start, start + 16).mapToObj(i -> cc("v" + i, "integer", Map.of("value", i))).toList();
+            staged = deal.compiler.ConstructionRepairWorkspace.stageCalls(staged, deal.compiler.ConstructionRepairWorkspace.callsDigest(staged),
+                    requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(portion)), "calls"), frontend).calls();
+        }
+        check(staged.items().size() == 512, "small portions retain the full existing transaction capacity");
+        var full = staged;
+        expectRejected(() -> deal.compiler.ConstructionRepairWorkspace.stageCalls(full,
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(full), secondCalls, frontend));
+    }
+
+    private static void portionRepairCanAddDependencyAtTransmissionTarget() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 12, 3)
+                .useConstructionApi().withConstructionPortions();
+        session.nextRequestJson();
+        var calls = new java.util.ArrayList<Map<String, Object>>();
+        for (int i = 0; i < 15; i++) calls.add(cc("v" + i, "integer", Map.of("value", i)));
+        calls.add(cc("assignment", "assign", Map.of("target", Map.of("path", List.of("i")),
+                "value", Map.of("binary", Map.of("left", Map.of("path", List.of("i")), "operator", "+", "right", 1)))));
+        String repair = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of(
+                "ticket", deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of())), "calls", calls)));
+        check(toolNames(repair).equals(List.of("patch_tool_argument")), "invalid inline expression gets a constructor repair grant");
+        var context = object(stringField(object(repair), "input"));
+        String repaired = session.acceptToolCallJson("patch_tool_argument", CompilerProtocolJson.encode(Map.of(
+                "ticket", stringField(context, "ticket"),
+                "replacement", cc("assignment", "assign", Map.of("target", Map.of("path", List.of("i")), "value", "sum")),
+                "dependencies", List.of(cc("sum", "binary", Map.of("left", Map.of("path", List.of("i")), "operator", "+", "right", 1))))));
+        check(toolNames(repaired).contains("finish_constructor_calls"), "dependency repair stages successfully instead of failing at the packet-size target");
+        check(stringField(object(repaired), "input").contains("\"callCount\":17"), "all sixteen original calls plus the granted dependency survive");
+    }
+
+    private static void constructorStagingConsumesInteractionBudget() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 2, 3)
+                .useConstructionApi().withConstructionPortions();
+        session.nextRequestJson();
+        var first = List.of(cc("one", "integer", Map.of("value", 1)));
+        session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket",
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of())), "calls", first)));
+        String stopped = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket",
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(first)), "calls")),
+                "calls", List.of(cc("two", "integer", Map.of("value", 2))))));
+        check(stringField(object(stopped), "status").equals("failed") && stopped.contains("SC1001"),
+                "staging cannot evade the caller's interaction budget by continually adding new handles");
+    }
+
+    private static void uiAstSupportsCompactOperands() {
+        var loopCalls = new java.util.ArrayList<Map<String, Object>>(List.of(
+                cc("label", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("path", List.of("item", "title")))), "children", List.of())),
+                cc("loop", "forEach", Map.of("collection", Map.of("path", List.of("state", "items")), "item", "item", "type", "Item", "key", Map.of("path", List.of("item", "id")), "children", List.of("label"))),
+                cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("loop"))),
+                cc("body", "uiBody", Map.of("children", List.of("column")))));
+        var loopBatch = object(CompilerProtocolJson.encode(Map.of("calls", loopCalls, "result", "body")));
+        CanonicalRefinementSession.validateSchema(loopBatch, deal.ui.CanonicalConstruction.bodyContract());
+        loopCalls.add(cc("root", "view", Map.of("name", "Main", "stateType", "AppState", "body", "body")));
+        new deal.ui.CanonicalConstruction(true).checkViewAst(
+                object(CompilerProtocolJson.encode(Map.of("calls", loopCalls, "result", "root"))),
+                "export class Item { id: int = 0; title: string = \"\"; } export class AppState { items: Item[] = []; }", PACK, "pack");
+        var values = List.of(7, true, Map.of("integer", 8), Map.of("boolean", false),
+                Map.of("text", "\ud83d\udc8a"), "", Map.of("path", List.of("state", "title")));
+        for (Object value : values) {
+            var batch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                    cc("node", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", value)),
+                            "children", List.of()))), "result", "node")));
+            var ast = new deal.ui.CanonicalConstruction(true).buildAst(batch, deal.compiler.DealConstruction.Kind.UI);
+            var call = (deal.ui.UiModel.Call) ast.root();
+            check(call.arguments().get("value") != null, "compact operand has an AST expression: " + value);
+            check(ast.owners().get(call).equals("node"), "compact operand retains containing constructor identity");
+        }
+        var invalid = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("value", "integer", Map.of("value", 4)),
+                cc("field", "field", Map.of("object", "value", "name", "x"))), "result", "field")));
+        try {
+            new deal.ui.CanonicalConstruction(true).buildAst(invalid, deal.compiler.DealConstruction.Kind.VALUE);
+            throw new AssertionError("Non-path field access must not create an invalid AST");
+        } catch (deal.compiler.DealConstruction.Failure expected) {
+            check(expected.ownerId.equals("field"), "invalid path reports a constructor failure, not a class cast crash");
+        }
+        var viewBatch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("label", "component", Map.of("name", "Text", "fields", List.of(), "children", List.of())),
+                cc("root", "view", Map.of("name", "Main", "stateType", "AppState", "body", "label"))), "result", "root")));
+        try {
+            new deal.ui.CanonicalConstruction(true).checkViewAst(viewBatch,
+                    "export class AppState { title: string = \"Ready\"; }",
+                    "pack version \"test\"; export class TextProps { value: string; } export component Text(props: TextProps): View;", "pack");
+            throw new AssertionError("Constructed view must undergo semantic validation");
+        } catch (deal.compiler.DealConstruction.Failure expected) {
+            check(expected.ownerId.equals("label"), "compiler API reports the precise failing constructor");
+            check(expected.getMessage().contains("value"), "semantic property diagnostic is retained");
+        }
+    }
+
+    private static void uiDiagnosticRetainsAstOwner() {
+        var file = java.nio.file.Path.of("/generated/app.dealui");
+        var dealFile = java.nio.file.Path.of("/generated/app.deal");
+        var checker = new deal.ui.UiChecker();
+        var dealModule = checker.parseDeal(dealFile, "export class AppState { title: string = \"Ready\"; }");
+        var pack = deal.ui.UiParser.parsePack(java.nio.file.Path.of("/generated/pack.dealui-pack"), """
+                pack version "test";
+                export class TextProps { value: string; }
+                export class ContainerProps {}
+                export component Text(props: TextProps): View;
+                export component Container(props: ContainerProps): View { children optional; }
+                """);
+        var parsed = deal.ui.UiParser.parseViews(file, """
+                import * as app from "./app.deal";
+                import * as ui from "pack";
+                // @ui-root
+                export view Main(state: app.AppState): View { ui.Container() { ui.Text() } }
+                """);
+        var span = new deal.ui.UiModel.Span(file, 1, 1);
+        var batch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("child", "component", Map.of("name", "Text", "fields", List.of(), "children", List.of())),
+                cc("parent", "component", Map.of("name", "Container", "fields", List.of(), "children", List.of("child")))),
+                "result", "parent")));
+        var constructed = new deal.ui.CanonicalConstruction(true).buildAst(batch, deal.compiler.DealConstruction.Kind.UI);
+        var parent = (deal.ui.UiModel.Call) constructed.root();
+        var child = parent.children().getFirst();
+        var original = parsed.views().getFirst();
+        var view = new deal.ui.UiModel.View(true, true, original.name(), original.parameters(), List.of(parent), span);
+        var module = new deal.ui.UiModel.ViewModule(parsed.imports(), List.of(view), "");
+        try {
+            checker.check(file, module, dealFile, dealModule, Map.of("pack", pack));
+            throw new AssertionError("Missing required property must be rejected");
+        } catch (deal.ui.UiDiagnostic diagnostic) {
+            check(diagnostic.code().equals("UI2028"), "required property diagnostic is preserved");
+            check(diagnostic.owningNode() == child, "AST identity survives identical spans and absent source text");
+            check(constructed.owners().get(diagnostic.owningNode()).equals("child"), "semantic error resolves directly to its constructor operation");
+            check(diagnostic.withRepairArtifact("dealui").owningNode() == child, "artifact classification preserves the AST owner");
+        }
+    }
+
+    private static void constructionProvenanceIsStructural() {
+        var batch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("label", "text", Map.of("value", "\ud83d\udc8a same")),
+                cc("first", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
+                cc("second", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
+                cc("body", "uiBody", Map.of("children", List.of("first", "second")))), "result", "body")));
+        var compiler = new deal.ui.CanonicalConstruction(true);
+        var projection = compiler.buildProjection(batch, deal.compiler.DealConstruction.Kind.BLOCK);
+        check(projection.source().equals(compiler.build(batch, deal.compiler.DealConstruction.Kind.BLOCK)), "provenance must not change canonical source");
+        var labels = projection.origins().stream().filter(o -> o.handle().equals("label")).toList();
+        check(labels.size() == 2 && labels.get(0).start() != labels.get(1).start(), "shared handles have a separate occurrence at each emission site");
+        for (var label : labels) {
+            check(projection.source().substring(label.start(), label.end()).equals(CompilerProtocolJson.encode("\ud83d\udc8a same")), "Unicode text ranges preserve exact code units");
+            check(projection.ownersAt(label.start()).getFirst().handle().equals("label"), "smallest emitted owner is selected before containing UI nodes");
+        }
+        var first = projection.origins().stream().filter(o -> o.handle().equals("first")).findFirst().orElseThrow();
+        var second = projection.origins().stream().filter(o -> o.handle().equals("second")).findFirst().orElseThrow();
+        check(first.end() < second.start(), "identical sibling text must retain different structural owners");
+        check(projection.ownersAt(-1).isEmpty() && projection.ownersAt(projection.source().length()).isEmpty(), "out of range offsets have no fabricated owner");
+        check(projection.equals(compiler.buildProjection(batch, deal.compiler.DealConstruction.Kind.BLOCK)), "emission and provenance are deterministic");
+        var functionBatch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("value", "integer", Map.of("value", 7)),
+                cc("ret", "return", Map.of("value", "value")),
+                cc("fn", "declareFunction", Map.of("name", "seven", "parameters", List.of(), "returns", "int", "body", "ret"))), "result", "fn")));
+        var function = new deal.compiler.DealConstruction().buildProjection(functionBatch, deal.compiler.DealConstruction.Kind.DECLARATION);
+        check(function.source().equals("export function seven(): int {\nreturn 7;\n}"), "DEAL projection remains byte-identical");
+        check(function.origins().stream().map(o -> o.handle()).toList().containsAll(List.of("fn", "ret", "value")), "nested DEAL origins survive BLOCK coercion");
+        var indented = deal.compiler.ConstructionProjection.indentBlock(projection, "    ", "  ");
+        check(indented.source().equals("\n" + projection.source().lines().map(line -> "    " + line.stripLeading())
+                .collect(java.util.stream.Collectors.joining("\n")) + "\n  "), "block formatting remains byte-identical");
+        for (var label : indented.origins().stream().filter(o -> o.handle().equals("label")).toList()) {
+            check(indented.source().substring(label.start(), label.end()).equals(CompilerProtocolJson.encode("\ud83d\udc8a same")),
+                    "indenting repeated Unicode literals preserves exact constructor ownership");
+        }
+        for (String source : List.of("a", "a\n", "a\r\n", " a\r\n\t b", "a\n\n", "\n a\n", "  ")) {
+            var input = new deal.compiler.ConstructionProjection.Result(source, List.of());
+            String expected = source.isBlank() ? "" : "\n" + source.lines().map(line -> "  " + line.stripLeading())
+                    .collect(java.util.stream.Collectors.joining("\n")) + "\n";
+            check(deal.compiler.ConstructionProjection.indentBlock(input, "  ", "").source().equals(expected),
+                    "formatting matches compiler line semantics for " + CompilerProtocolJson.encode(source));
+        }
+    }
+
     private static void argumentRepairIsScopedAndTransactional() {
         var operand = Map.of("type", "string");
         var callSchema = deal.compiler.DealConstruction.objectSchema(Map.of(
@@ -101,6 +350,7 @@ public final class CanonicalRefinementSessionTest {
         String oldTicket = workspace.ticket();
         String request = workspace.request(Map.of("status", "request"));
         check(toolNames(request).equals(List.of("patch_tool_argument")), "only narrow argument repair is granted");
+        check(request.contains("\"strict\":true"), "argument repair retains strict provider schema enforcement");
         check(request.contains("availableHandles"), "repair provides existing handle choices");
         expectRejected(() -> workspace.patch(object(CompilerProtocolJson.encode(Map.of(
                 "ticket", "stale", "replacement", "b")))));
@@ -173,6 +423,32 @@ public final class CanonicalRefinementSessionTest {
         check(group.complete() && group.rounds() == 1, "independent invalid slots are repaired in one provider turn");
         check(requireArray(field(group.candidate(), "calls"), "calls").items().get(2)
                 .equals(requireArray(field(groupCandidate, "calls"), "calls").items().get(2)), "grouped repair preserves unrelated constructor bytes");
+    }
+
+    private static void constructionDependenciesIgnoreLiteralNames() {
+        var compiler = new deal.ui.CanonicalConstruction(true);
+        var call = object(CompilerProtocolJson.encode(cc("button", "component", Map.of(
+                "name", "Button", "children", List.of("child"), "fields", List.of(
+                        Map.of("name", "text", "value", Map.of("text", "child")),
+                        Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "child", "fields", List.of(
+                                Map.of("name", "value", "value", "operand"))))))))));
+        check(compiler.inspectDependencies(call).handles().equals(java.util.Set.of("child", "operand")),
+                "frontend operand reader includes child and nested action handles only");
+        var envelope = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("bad", "return", Map.of("value", "missing")),
+                cc("consumer", "block", Map.of("statements", List.of("bad"))),
+                cc("literal", "text", Map.of("value", "bad")),
+                cc("symbol", "path", Map.of("parts", List.of("bad"))),
+                cc("literalReturn", "return", Map.of("value", Map.of("text", "bad")))))));
+        var repair = new deal.compiler.ConstructionRepairWorkspace(envelope,
+                new deal.compiler.DealConstruction.Failure("bad", "missing handle"));
+        check(repair.snapshot().get("editable").equals(List.of("bad", "consumer")),
+                "matching literal text and symbol names cannot broaden repair permissions");
+        expectRejected(() -> repair.patch(CanonicalJson.arr(List.of(
+                object(CompilerProtocolJson.encode(cc("bad", "return", Map.of("value", 0)))),
+                object(CompilerProtocolJson.encode(cc("literal", "text", Map.of("value", "changed"))))))));
+        check(CompilerProtocolJson.encode(repair.envelope()).equals(CompilerProtocolJson.encode(envelope)),
+                "unrelated literal patch rolls back atomically");
     }
 
     private static void refinementActionInsertionCanContinueInDeal() {
@@ -576,7 +852,9 @@ public final class CanonicalRefinementSessionTest {
         } catch (deal.compiler.DealConstruction.Failure failure) {
             check(failure.ownerId.equals("content") && failure.getMessage().contains("NEW component constructor"),
                     "wrong-kind diagnostic must explain the required UI wrapper and target the consuming node");
-            var workspace = new deal.compiler.ConstructionRepairWorkspace(scalarChildEnvelope, failure);
+            check(failure.code.equals("CC1005") && failure.facts.get("expectedKind").equals("UI")
+                    && failure.facts.get("actualKind").equals("VALUE"), "constructor kind mismatch must expose structured facts");
+            var workspace = new deal.compiler.ConstructionRepairWorkspace(scalarChildEnvelope, failure, new deal.ui.CanonicalConstruction(true));
             var patchCalls = List.of(
                     cc("labelNode", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
                     cc("content", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("labelNode"))));
@@ -707,7 +985,131 @@ public final class CanonicalRefinementSessionTest {
         var batchArguments = Map.<String, Object>of("supportingDeclarations", List.of(), "capabilities", List.of(),
                 "appStateDeclaration", "stateType", "initialStateBody", "init",
                 "actionHandlers", List.of(Map.of("actionDeclaration", "actionType", "handlerDeclaration", "handler")), "final", true);
+        var v2 = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 16, 5)
+                .useConstructionApi().withRepairProtocol("repair-workspace-v2");
+        check(stringField(object(v2.nextRequestJson()), "repairProtocol").equals("repair-workspace-v2"), "repair version must be negotiated");
+        var missingTypeBatch = new java.util.ArrayList<Map<String, Object>>(batch);
+        missingTypeBatch.add(cc("leafDefault", "record", Map.of("fields", List.of(Map.of("name", "value", "value", 0)))));
+        missingTypeBatch.add(cc("holder", "declareRecord", Map.of("name", "Holder", "fields", List.of(
+                Map.of("name", "leaf", "type", "Leaf", "value", "leafDefault")))));
+        var missingTypeArgs = new java.util.LinkedHashMap<String, Object>(batchArguments);
+        missingTypeArgs.put("supportingDeclarations", List.of("holder"));
+        String missingTypeRepair = v2.acceptToolCallJson("construct_apply_deal_batch", construction(missingTypeBatch, missingTypeArgs));
+        check(toolNames(missingTypeRepair).contains("expand_repair_scope"), "missing type must offer scope expansion: " + missingTypeRepair);
+        var repairGroup = inputObject(missingTypeRepair, "repairGroup");
+        var obligations = requireArray(field(repairGroup, "obligations"), "obligations");
+        String obligation = stringField(CompilerProtocolJson.requireObject(obligations.items().getFirst(), "obligation"), "id");
+        String expanded = v2.acceptToolCallJson("expand_repair_scope", CompilerProtocolJson.encode(Map.of("expansions", List.of("add:" + obligation))));
+        check(CompilerProtocolJson.intField(object(expanded), "semanticRepairs") == CompilerProtocolJson.intField(object(missingTypeRepair), "semanticRepairs"),
+                "scope expansion must not consume semantic repair");
+        check(!toolNames(expanded).contains("construct_apply_deal_batch"), "scope expansion must not reopen full generation");
+        String dependencyFixed = v2.acceptToolCallJson("construct_apply_repair_transaction", construction(List.of(
+                cc("leaf", "declareRecord", Map.of("name", "Leaf", "fields", List.of(Map.of("name", "value", "type", "int", "value", 0))))),
+                Map.of("patches", List.of(), "dependencies", List.of(Map.of("obligation", obligation, "declaration", "leaf")))));
+        check(toolNames(dependencyFixed).contains("construct_apply_deal_ui_changes"), "source-free dependency repair must advance to UI: " + dependencyFixed);
         String ui = session.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
+        var sourceBatchSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3)
+                .useSourceBatchApi().withRepairProtocol("repair-workspace-v2");
+        check(toolNames(sourceBatchSession.nextRequestJson()).equals(List.of("apply_deal_batch")),
+                "source and constructor authoring must use the same coarse DEAL transaction");
+        var sourceBatch = ConstructionSurface.lower(object(construction(batch, batchArguments)), false, "apply_deal_batch");
+        String sourceUi = sourceBatchSession.acceptToolCallJson("apply_deal_batch", CompilerProtocolJson.encode(sourceBatch));
+        check(field(object(sourceUi), "revision").equals(field(object(ui), "revision")),
+                "identical source and constructor inputs must produce the same canonical revision");
+        check(toolNames(sourceUi).contains("apply_deal_ui_changes"), "complete source batch must advance directly to UI");
+        var portions = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi().withConstructionPortions();
+        String portionRequest = portions.nextRequestJson();
+        check(toolNames(portionRequest).equals(List.of("stage_constructor_calls")), "portion mode exposes append before finalization");
+        check(!stringField(object(portionRequest), "instructions").contains("construct_apply_deal_batch")
+                && !stringField(object(portionRequest), "instructions").contains("same batch"),
+                "portion instructions must not contain obsolete single-batch delivery rules");
+        String firstTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of()));
+        var incompleteFoundation = new java.util.ArrayList<Map<String, Object>>(foundation);
+        incompleteFoundation.set(incompleteFoundation.size() - 1, cc("init", "block", Map.of("statements", List.of())));
+        portionRequest = portions.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", firstTicket, "calls", incompleteFoundation)));
+        check(!toolNames(portionRequest).contains("replace_staged_call"), "staged replacement is not granted before inspection");
+        String incompleteTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(incompleteFoundation)), "calls"));
+        String beforeInvalidReads = portions.nextRequestJson();
+        expectRejected(() -> portions.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "inspect_staged_call", "arguments", Map.of("ticket", incompleteTicket, "target", "init")),
+                Map.of("name", "inspect_staged_call", "arguments", Map.of("ticket", incompleteTicket, "target", "missing"))))));
+        check(beforeInvalidReads.equals(portions.nextRequestJson()), "invalid batched read cannot partially issue inspection grants");
+        portionRequest = portions.acceptToolCallsJson(CompilerProtocolJson.encode(List.of(
+                Map.of("name", "inspect_staged_call", "arguments", Map.of("ticket", incompleteTicket, "target", "init")),
+                Map.of("name", "inspect_staged_call", "arguments", Map.of("ticket", incompleteTicket, "target", "stateType")))));
+        check(stringField(object(portionRequest), "input").contains("\"target\":\"init\"")
+                && stringField(object(portionRequest), "input").contains("\"target\":\"stateType\""), "batch reads return every inspected constructor, not only the last");
+        check(toolNames(portionRequest).contains("replace_staged_call"), "inspection issues a targeted replacement grant");
+        check(!toolNames(portionRequest).contains("inspect_staged_call"), "staged write phase hides repeated inspection tools");
+        portionRequest = portions.acceptToolCallJson("replace_staged_call", CompilerProtocolJson.encode(Map.of("ticket", incompleteTicket, "replacement", foundation.getLast())));
+        check(!toolNames(portionRequest).contains("replace_staged_call"), "successful staged edit consumes its inspection grant");
+        String secondTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(foundation)), "calls"));
+        String rejectedPortion = portions.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", secondTicket,
+                "calls", List.of(cc("zero", "integer", Map.of("value", 99))))));
+        check(toolNames(rejectedPortion).contains("stage_constructor_calls") && rejectedPortion.contains("Duplicate staged constructor handle"),
+                "conflicting portion gets scoped feedback without discarding prior calls");
+        portionRequest = portions.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", secondTicket, "calls", behavior)));
+        String finalTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(batch)), "calls"));
+        String portionUi = portions.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", finalTicket, "arguments", batchArguments)));
+        check(toolNames(portionUi).equals(List.of("stage_constructor_calls")), "accepted DEAL transaction advances to staged UI generation");
+        check(field(object(portionUi), "revision").equals(field(object(ui), "revision")), "public staged tools produce exactly the single-batch canonical revision");
+        var portionNodes = List.of(
+                cc("title", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("path", List.of("state", "title")))), "children", List.of())),
+                cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", Map.of("text", "Add")),
+                        Map.of("name", "onClick", "value", Map.of("action", Map.of("name", "IncrementAction", "fields", List.of())))), "children", List.of())),
+                cc("root", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("title", "button"))));
+        portions.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", firstTicket, "calls", portionNodes)));
+        String uiTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(portionNodes)), "calls"));
+        String stagedBeforeStale = portions.nextRequestJson();
+        expectRejected(() -> portions.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", firstTicket,
+                "arguments", Map.of("operations", List.of(Map.of("operation", "replaceViewBody", "body", "root")), "final", true)))));
+        check(stagedBeforeStale.equals(portions.nextRequestJson()), "stale finalize must preserve the complete staged candidate");
+        String portionDone = portions.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", uiTicket,
+                "arguments", Map.of("operations", List.of(Map.of("operation", "replaceViewBody", "body", "root")), "final", true))));
+        check(booleanField(object(portionDone), "accepted"), "public portion tools must publish a compiler-checked DEAL and UI pair");
+        var rootSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+        rootSession.nextRequestJson();
+        var badRoots = new java.util.LinkedHashMap<String, Object>(batchArguments);
+        badRoots.put("appStateDeclaration", "wrongState");
+        badRoots.put("initialStateBody", "wrongInit");
+        String rootRequest = rootSession.acceptToolCallJson("construct_apply_deal_batch", construction(batch, badRoots));
+        check(toolNames(rootRequest).contains("construct_repair_roots"), "missing result bindings must be repairable without duplicate declarations");
+        var rootContext = inputObject(rootRequest, "constructorRepair");
+        for (var raw : requireArray(field(rootContext, "roots"), "roots").items()) {
+            var root = CompilerProtocolJson.requireObject(raw, "root");
+            var reference = CompilerProtocolJson.requireObject(field(root, "reference"), "reference");
+            if (stringField(reference, "handle").equals("wrongInit")) {
+                check(stringField(reference, "expectedKind").equals("BLOCK"), "root repair carries the actual consumer kind");
+                check(!CompilerProtocolJson.encode(field(root, "compatibleHandles")).contains("stateType"),
+                        "initializer repair must never offer a declaration as a body");
+                var invalidSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+                invalidSession.nextRequestJson();
+                invalidSession.acceptToolCallJson("construct_apply_deal_batch", construction(batch, badRoots));
+                String invalid = invalidSession.acceptToolCallJson("construct_repair_roots", CompilerProtocolJson.encode(Map.of(
+                        "ticket", stringField(rootContext, "ticket"), "replacements", List.of(Map.of("target", stringField(root, "target"), "handle", "stateType")))));
+                check(toolNames(invalid).contains("patch_tool_argument"), "cross-kind root binding is argument repair, not a committed constructor mutation");
+            }
+        }
+        var rootPatches = requireArray(field(rootContext, "roots"), "roots").items().stream().map(raw -> {
+            var root = CompilerProtocolJson.requireObject(raw, "root");
+            String missing = stringField(CompilerProtocolJson.requireObject(field(root, "reference"), "reference"), "handle");
+            return Map.of("target", stringField(root, "target"), "handle", missing.equals("wrongState") ? "stateType" : "init");
+        }).toList();
+        String rootTicket = stringField(rootContext, "ticket");
+        expectRejected(() -> rootSession.acceptToolCallJson("construct_repair_roots", CompilerProtocolJson.encode(Map.of("ticket", "stale", "replacements", rootPatches))));
+        check(rootRequest.equals(rootSession.nextRequestJson()), "stale root tickets preserve the candidate");
+        String rootFixed = rootSession.acceptToolCallJson("construct_repair_roots", CompilerProtocolJson.encode(Map.of("ticket", rootTicket, "replacements", rootPatches)));
+        check(toolNames(rootFixed).contains("construct_apply_deal_ui_changes"), "all missing roots repaired in one public tool call");
+        check(field(object(rootFixed), "revision").equals(field(object(ui), "revision")), "root rebinding preserves every constructor and yields identical canonical source");
+        var missingBodySession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+        missingBodySession.nextRequestJson();
+        String missingBody = missingBodySession.acceptToolCallJson("construct_apply_deal_batch", construction(foundation.subList(0, 3), Map.of(
+                "supportingDeclarations", List.of(), "capabilities", List.of(), "appStateDeclaration", "stateType", "initialStateBody", "init",
+                "actionHandlers", List.of(), "final", true)));
+        check(toolNames(missingBody).equals(List.of("construct_repair_call")), "no compatible result means construct a dependency, not forced rebinding");
+        String addedBody = missingBodySession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("init", "returnRecord", Map.of("fields", List.of(Map.of("name", "count", "value", "zero"), Map.of("name", "title", "value", "initialTitle"))))))));
+        check(toolNames(addedBody).equals(List.of("construct_append_deal_behavior")), "repaired initializer is committed and generation advances to missing behavior: " + addedBody);
         var argumentSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
         String beforeArguments = argumentSession.nextRequestJson();
         check(CompilerProtocolJson.intField(object(beforeArguments), "maxOutputTokens") == 32768,
@@ -744,25 +1146,23 @@ public final class CanonicalRefinementSessionTest {
                 "argument repair remains distinct from semantic repair");
         var constructorSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         constructorSession.nextRequestJson();
-        var wrongKind = new java.util.ArrayList<Map<String, Object>>(batch);
-        wrongKind.set(foundation.size(), cc("actionType", "record", Map.of("fields", List.of())));
-        String wrongEnvelope = construction(wrongKind, batchArguments);
+        var wrongArguments = new java.util.LinkedHashMap<String, Object>(batchArguments);
+        wrongArguments.put("appStateDeclaration", "init");
+        String wrongEnvelope = construction(batch, wrongArguments);
         String validation = constructorSession.validateToolCallsJson(CompilerProtocolJson.encode(List.of(Map.of(
                 "name", "construct_apply_deal_batch", "arguments", object(wrongEnvelope)))));
         check(validation.contains("\"valid\":true"), "constructor type mismatch is not a transport failure");
         String constructorRepair = constructorSession.acceptToolCallJson("construct_apply_deal_batch", wrongEnvelope);
-        check(toolNames(constructorRepair).equals(List.of("construct_repair_call")), "only narrow constructor repair may be offered");
+        check(toolNames(constructorRepair).contains("construct_repair_roots"), "existing incompatible roots must offer reference repair");
         check(stringField(object(constructorRepair), "input").contains("DECLARATION"), "typed diagnostic must reach the model");
-        expectRejected(() -> constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
-                "calls", List.of(behavior.get(0), cc("stateType", "declareRecord", Map.of("name", "AppState", "fields", List.of())))))));
-        check(constructorRepair.equals(constructorSession.nextRequestJson()), "unauthorized sibling edits must not change repair state");
-        check(!stringField(object(constructorRepair), "input").contains("consumerContract"), "constructor repair must not replay unrelated pack contracts");
-        check(stringField(object(stringField(object(constructorRepair), "input")), "requiredArtifact").equals("deal"), "narrow repair must preserve artifact/model routing");
-        String repeated = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
-                "calls", List.of(wrongKind.get(foundation.size())))));
-        check(stringField(object(repeated), "input").contains("NO_PROGRESS"), "identical repairs must not silently repeat identical model context");
-        String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", List.of(behavior.get(0), foundation.get(2)))));
-        check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired declaration must resume the original batch");
+        var incompatibleContext = inputObject(constructorRepair, "constructorRepair");
+        var incompatibleRoot = CompilerProtocolJson.requireObject(requireArray(field(incompatibleContext, "roots"), "roots").items().getFirst(), "root");
+        var incompatibleReference = CompilerProtocolJson.requireObject(field(incompatibleRoot, "reference"), "reference");
+        check(stringField(incompatibleReference, "actualKind").equals("BLOCK"), "root diagnostic records actual kind without modifying the referenced body");
+        String constructorFixed = constructorSession.acceptToolCallJson("construct_repair_roots", CompilerProtocolJson.encode(Map.of(
+                "ticket", stringField(incompatibleContext, "ticket"), "replacements", List.of(Map.of(
+                "target", stringField(incompatibleRoot, "target"), "handle", "stateType")))));
+        check(toolNames(constructorFixed).contains("construct_apply_deal_ui_changes"), "a single repaired reference must resume the original batch");
         check(CompilerProtocolJson.encode(CompilerProtocolJson.field(object(constructorFixed), "revision")).equals(
                 CompilerProtocolJson.encode(CompilerProtocolJson.field(object(ui), "revision"))), "constructor repair must preserve every sibling and original transaction argument");
         check(!toolNames(ui).contains("finish_deal"), "final batch must transition without a completion round");
@@ -787,7 +1187,16 @@ public final class CanonicalRefinementSessionTest {
             var props = CompilerProtocolJson.requireObject(CompilerProtocolJson.field(actual, "props"), "props");
             check(props.entries().size() == expected.properties().size(), "compact surface must retain every property");
             for (var property : expected.properties()) check(stringField(props,
-                    property.name() + (property.optional() ? "?" : "")).equals(property.type()), "property type and optionality must round-trip");
+                    property.name() + (property.omittable() ? "?" : "")).equals(property.type()), "property type and omittability must round-trip");
+            if (expected.name().equals("Column")) {
+                var defaults = CompilerProtocolJson.requireObject(field(actual, "defaults"), "defaults");
+                check(stringField(defaults, "vertical").equals("top") && booleanField(defaults, "wrap"),
+                        "pack scalar defaults must reach the source-free agent contract without source parsing");
+                check(stringField(CompilerProtocolJson.requireObject(field(defaults, "fraction"), "number default"), "number").equals("0.5"),
+                        "fractional defaults use typed decimal metadata, never internal hex-float JSON");
+                check(expected.properties().stream().allMatch(p -> p.hasDefault() && !p.optional() && p.omittable()),
+                        "declared optionality and default-based omission must remain distinct");
+            }
             check(stringField(actual, "children").equals(expected.children()), "typed-child contract must remain exact");
         }
         var repairSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
@@ -811,20 +1220,60 @@ public final class CanonicalRefinementSessionTest {
                 Map.of("slot", "R5", "payload", Map.of("declaration", "handler"))));
         check(toolNames(repaired).contains("construct_apply_deal_ui_changes"), "repaired final batch must advance directly to UI: " + repaired);
         var nodes = new java.util.ArrayList<Map<String, Object>>(List.of(
-                cc("label", "integer", Map.of("value", 7)),
-                cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", "label")), "children", List.of())),
+                cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", 7)), "children", List.of())),
+                cc("secondText", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "title", "value", Map.of("text", "wrong"))), "children", List.of())),
                 cc("action", "action", Map.of("name", "IncrementAction", "fields", List.of())),
-                cc("buttonText", "text", Map.of("value", "Add")),
-                cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", "buttonText"), Map.of("name", "onClick", "value", "action")), "children", List.of())),
-                cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("text", "button"))),
+                cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", Map.of("text", "Add")), Map.of("name", "onClick", "value", "action")), "children", List.of())),
+                cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", List.of("text", "secondText", "button"))),
                 cc("body", "uiBody", Map.of("children", List.of("column")))));
+        String v2UiRejected = v2.acceptToolCallJson("construct_apply_deal_ui_changes", construction(nodes, Map.of(
+                "operations", List.of(Map.of("operation", "replaceViewBody", "body", "body")), "final", true)));
+        check(toolNames(v2UiRejected).equals(List.of("construct_repair_call")), "UI semantic error must expose only a constructor patch: " + v2UiRejected);
+        var uiRepairInput = object(stringField(object(v2UiRejected), "input"));
+        var uiConstructorRepair = (CanonicalJson.Obj) field(uiRepairInput, "constructorRepair");
+        check(CompilerProtocolJson.encode(field(uiConstructorRepair, "editable")).equals("[\"text\",\"secondText\"]"),
+                "checker grants exactly both invalid sibling AST nodes");
+        var diagnosticFacts = (CanonicalJson.Obj) field((CanonicalJson.Obj) field(uiConstructorRepair, "diagnosticFacts"), "facts");
+        var groupedDiagnostics = requireArray(CompilerProtocolJson.decode(stringField(diagnosticFacts, "diagnostics")), "diagnostics");
+        check(groupedDiagnostics.items().size() == 3, "one pass reports the type error plus missing and unknown properties");
+        var contracts = requireArray(field(uiRepairInput, "componentContract"), "componentContract");
+        check(contracts.items().size() == 1 && stringField((CanonicalJson.Obj) contracts.items().getFirst(), "name").equals("Text"),
+                "semantic constructor repair receives the exact component contract, not the complete pack");
+        var patch = Map.of("calls", List.of(cc("text", "component", Map.of("name", "Text",
+                "fields", List.of(Map.of("name", "value", "value", Map.of("text", "Counter"))), "children", List.of())),
+                cc("secondText", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("text", "Ready"))), "children", List.of()))));
+        expectRejected(() -> v2.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of(
+                "calls", List.of(cc("button", "component", Map.of("name", "Button", "fields", List.of(Map.of("name", "text", "value", Map.of("text", "unrelated"))), "children", List.of())))))));
+        String v2Completed = v2.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(patch));
+        check(booleanField(object(v2Completed), "accepted"), "v2 agent must publish checked pair: " + v2Completed);
+        check(stringField(object(v2Completed), "deal").contains("class Leaf"), "granted dependency must survive UI repair");
+        var wideSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
+        wideSession.nextRequestJson();
+        wideSession.acceptToolCallJson("construct_apply_deal_batch", construction(batch, batchArguments));
+        var wideNodes = new java.util.ArrayList<Map<String, Object>>();
+        var widePatches = new java.util.ArrayList<Map<String, Object>>();
+        var wideChildren = new java.util.ArrayList<String>();
+        for (int i = 0; i < 17; i++) {
+            String id = "label" + i;
+            wideChildren.add(id);
+            wideNodes.add(cc(id, "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", i)), "children", List.of())));
+            widePatches.add(cc(id, "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("text", "Value " + i))), "children", List.of())));
+        }
+        wideNodes.addAll(nodes.subList(2, 4));
+        wideChildren.add("button");
+        wideNodes.add(cc("column", "component", Map.of("name", "Column", "fields", List.of(), "children", wideChildren)));
+        var wideRejected = wideSession.acceptToolCallJson("construct_apply_deal_ui_changes", construction(wideNodes, Map.of(
+                "operations", List.of(Map.of("operation", "replaceViewBody", "body", "column")), "final", true)));
+        var wideRepair = inputObject(wideRejected, "constructorRepair");
+        check(requireArray(field(wideRepair, "editable"), "editable").items().size() == 17,
+                "all invalid sibling nodes must be granted as one repair group");
+        var wideCompleted = wideSession.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(Map.of("calls", widePatches)));
+        check(booleanField(object(wideCompleted), "accepted"), "every member of an issued repair group must be repairable atomically");
         String rejected = session.acceptToolCallJson("construct_apply_deal_ui_changes", construction(nodes, Map.of(
                 "operations", List.of(Map.of("operation", "replaceViewBody", "body", "body")), "final", true)));
-        check(rejected.contains("UI2031") && toolNames(rejected).contains("construct_patch_repair_slot"),
+        check(rejected.contains("UI2031") && toolNames(rejected).contains("construct_repair_call"),
                 "typed construction must still run semantic validation and expose source-free repair: " + rejected);
-        nodes.set(0, cc("label", "text", Map.of("value", "Counter")));
-        String complete = session.acceptToolCallJson("construct_patch_repair_slot", construction(nodes, Map.of(
-                "slot", "R1", "payload", Map.of("body", "body"))));
+        String complete = session.acceptToolCallJson("construct_repair_call", CompilerProtocolJson.encode(patch));
         check(booleanField(object(complete), "accepted"), "correct construction must commit a canonical pair: " + complete);
         check(stringField(object(complete), "deal").contains("state.count + 1"), "compiler must emit the expression");
         var constructor = new deal.ui.CanonicalConstruction(false);
@@ -961,6 +1410,18 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void stricterCheckedContractBecomesRepairInsteadOfShadowCrash() {
+        var v2 = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2)
+                .withRepairProtocol("repair-workspace-v2");
+        v2.nextRequestJson(); counterFoundation(v2);
+        String v2Repair = appendRun(v2, "Run", "state.count = 1; return state;");
+        check(toolNames(v2Repair).contains("apply_repair_transaction"),
+                "v2 borrowed-state diagnostic must grant a repair for the staged addDeclaration target: " + v2Repair);
+        String v2Fixed = v2.acceptToolCallJson("apply_repair_transaction", CompilerProtocolJson.encode(Map.of(
+                "patches", List.of(Map.of("slot", "R2", "operation", "addDeclaration", "payload", Map.of(
+                        "declaration", "// @ui-update\nexport function onRun(state: AppState, action: RunAction): AppState { return {title: state.title, count: 1}; }"))),
+                "dependencies", List.of())));
+        check(!toolNames(v2Fixed).contains("apply_repair_transaction") && v2Fixed.contains("RunAction"),
+                "v2 public repair must fix borrowed mutation and preserve the staged action");
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Controls", 10, 2);
         session.nextRequestJson(); counterFoundation(session);
         String repair = appendRun(session, "Run", "state.count = 1; return state;");
@@ -1043,6 +1504,112 @@ public final class CanonicalRefinementSessionTest {
         check(booleanField(object, "accepted"), "UI-only revision must be accepted");
         check(stringField(object, "deal").equals(DEAL), "UI-only revision must not touch DEAL");
         check(stringField(object, "dealUi").contains("value: \"Polished\""), "UI property must be changed");
+    }
+
+    private static void constructorLocalReferenceRepairAndCycleDetection() {
+        var envelope = object(construction(List.of(
+                cc("local", "local", Map.of("name", "items", "type", "int", "value", 0)),
+                cc("result", "return", Map.of("value", "items")),
+                cc("body", "block", Map.of("statements", List.of("local", "result")))), Map.of("body", "body")));
+        var missing = new deal.compiler.DealConstruction.Failure("CC1004", "result", "missing value operand",
+                Map.of("expectedKind", "VALUE", "missingHandle", "items"));
+        var workspace = new deal.compiler.ConstructionRepairWorkspace(envelope, missing);
+        check(CompilerProtocolJson.encode(workspace.snapshot()).contains("valueAlternatives"), "compiler must expose typed operand alternatives");
+        check(CompilerProtocolJson.encode(workspace.snapshot()).contains("\"path\":[\"items\"]"),
+                "a named local is represented as a path, not its statement handle");
+        var wrongPatch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(cc("result", "return", Map.of("value", "local"))))));
+        workspace.patch(requireArray(field(wrongPatch, "calls"), "calls"));
+        workspace.reject(new deal.compiler.DealConstruction.Failure("CC1005", "result", "wrong kind",
+                Map.of("expectedKind", "VALUE", "actualKind", "STATEMENT", "handle", "local")));
+        check(!workspace.repeatedCandidate(), "a different rejected candidate is not yet a cycle");
+        var originalPatch = object(CompilerProtocolJson.encode(Map.of("calls", List.of(cc("result", "return", Map.of("value", "items"))))));
+        workspace.patch(requireArray(field(originalPatch, "calls"), "calls"));
+        workspace.reject(missing);
+        check(workspace.repeatedCandidate(), "A -> B -> A must be reported as a cycle");
+        var fixed = new deal.compiler.ConstructionRepairWorkspace(envelope, missing);
+        var correction = object(CompilerProtocolJson.encode(Map.of("calls", List.of(cc("result", "return",
+                Map.of("value", Map.of("path", List.of("items"))))))));
+        fixed.patch(requireArray(field(correction, "calls"), "calls"));
+        String source = new deal.compiler.DealConstruction().build(object(CompilerProtocolJson.encode(Map.of(
+                "calls", field(fixed.envelope(), "calls"), "result", "body"))), deal.compiler.DealConstruction.Kind.BLOCK);
+        check(source.equals("let items: int = 0;\nreturn items;"), "targeted value repair must preserve local declaration and block");
+        var invalidBlock = object(CompilerProtocolJson.encode(Map.of("calls", List.of(
+                cc("value", "emptyArray", Map.of()),
+                cc("local", "local", Map.of("name", "items", "type", "int[]", "value", "value")),
+                cc("ancestor", "block", Map.of("statements", List.of("body"))),
+                cc("transitiveAncestor", "block", Map.of("statements", List.of("ancestor"))),
+                cc("body", "block", Map.of("statements", List.of("value", "local")))), "result", "body")));
+        try {
+            new deal.compiler.DealConstruction().build(invalidBlock, deal.compiler.DealConstruction.Kind.BLOCK);
+            throw new AssertionError("VALUE cannot be used as a statement");
+        } catch (deal.compiler.DealConstruction.Failure failure) {
+            check(failure.code.equals("CC1005") && failure.getMessage().contains("STATEMENT or BLOCK"), "block diagnostic must identify the accepted kinds");
+            var repair = new deal.compiler.ConstructionRepairWorkspace(invalidBlock, failure);
+            var schema = repair.blockOperandRepairSchema();
+            var properties = (Map<?, ?>) schema.get("properties");
+            String ticket = (String) ((Map<?, ?>) properties.get("ticket")).get("const");
+            var items = (Map<?, ?>) ((Map<?, ?>) properties.get("statements")).get("items");
+            check(items.get("enum").equals(List.of("local")), "typed block grant excludes VALUE and self handles");
+            String before = CompilerProtocolJson.encode(repair.envelope());
+            expectRejected(() -> repair.patchBlockOperands(object(CompilerProtocolJson.encode(Map.of("ticket", ticket, "statements", List.of("value"))))));
+            expectRejected(() -> repair.patchBlockOperands(object(CompilerProtocolJson.encode(Map.of("ticket", ticket, "statements", List.of("transitiveAncestor"))))));
+            check(before.equals(CompilerProtocolJson.encode(repair.envelope())), "invalid typed operand cannot mutate workspace");
+            repair.patchBlockOperands(object(CompilerProtocolJson.encode(Map.of("ticket", ticket, "statements", List.of("local")))));
+            expectRejected(() -> repair.patchBlockOperands(object(CompilerProtocolJson.encode(Map.of("ticket", ticket, "statements", List.of())))));
+            check(new deal.compiler.DealConstruction().build(repair.envelope(), deal.compiler.DealConstruction.Kind.BLOCK)
+                    .equals("let items: int[] = [];"), "repair preserves value and its statement consumer");
+        }
+    }
+
+    private static void sourceFreeAgentAllocatesUiRepairSlot() {
+        var missingProp = CanonicalCompiler.compileCanonicalApp(DEAL, UI.replace("value: state.title", ""), PACK, "./ui.pack");
+        check(missingProp.diagnostics().stream().anyMatch(d -> d.code().equals("UI2028")
+                && d.expected().equals("value: string") && d.actual().equals("absent")), "missing props must include their required type");
+        var unknownLocal = deal.compiler.DealCompilerWorkspace.inspect(
+                "export function increment(count: int): int { let next: int = count + 1; return nextHandle; }", "/app.deal");
+        check(unknownLocal.diagnostics().stream().filter(d -> d.code().equals("E2001")).flatMap(d -> d.notes().stream())
+                .anyMatch(n -> n.message().contains("count: int") && n.message().contains("next: int")), "unknown identifiers must expose lexical variable names, not constructor handles");
+        var unknownRoot = CanonicalCompiler.compileCanonicalApp(DEAL, UI.replace("state.title", "payload"), PACK, "./ui.pack");
+        check(unknownRoot.diagnostics().stream().anyMatch(d -> d.code().equals("UI2021")
+                && d.actual().equals("payload") && d.expected().contains("state:")), "unknown UI roots must list actual lexical bindings");
+        var unknownField = CanonicalCompiler.compileCanonicalApp(DEAL, UI.replace("state.title", "state.absent"), PACK, "./ui.pack");
+        check(unknownField.diagnostics().stream().anyMatch(d -> d.code().equals("UI2024")
+                && d.actual().equals("absent") && d.expected().contains("title")), "unknown UI fields must list compiler-known fields");
+        var session = new CanonicalRefinementSession(DEAL, UI, PACK, "./ui.pack",
+                "Reorganize the controls", 8, 3).useConstructionApi().withRepairProtocol("repair-workspace-v2");
+        String initial = session.nextRequestJson();
+        String button = uiNodeAlias(initial, "ui.Button");
+        String write = session.acceptToolCallJson("inspect_deal_ui_change", CompilerProtocolJson.encode(Map.of(
+                "anchors", List.of(button), "requestedOperations", List.of("replaceSubtree"))));
+        check(toolNames(write).contains("construct_replace_deal_ui_subtree"), "agent must receive a source-free subtree tool");
+        String rejected = session.acceptToolCallJson("construct_replace_deal_ui_subtree", construction(List.of(
+                cc("text", "component", Map.of("name", "Text", "fields", List.of(Map.of("name", "value", "value", Map.of("text", "Moved"))), "children", List.of()))),
+                Map.of("target", button, "source", "text", "final", true)));
+        check(toolNames(rejected).contains("expand_ui_repair_scope"), "missing action binding must expose compiler insertion: " + rejected);
+        int repairs = CompilerProtocolJson.intField(object(rejected), "semanticRepairs");
+        check(toolNames(rejected).contains("query_ui_contracts"), "v2 UI repair can read exact component contracts");
+        check(stringField(object(rejected), "input").contains("appInterface"), "UI repair retains typed state and action context");
+        String contractsRead = session.acceptToolCallJson("query_ui_contracts", CompilerProtocolJson.encode(Map.of(
+                "components", List.of("Button"), "actions", List.of("IncrementAction"))));
+        check(CompilerProtocolJson.intField(object(contractsRead), "semanticRepairs") == repairs,
+                "reading UI repair contracts cannot consume semantic repair budget");
+        check(stringField(object(contractsRead), "input").contains("requestedContracts")
+                        && stringField(object(contractsRead), "input").contains("onClick"),
+                "requested contracts reach v2 repair rather than being lost by the early return");
+        check(toolNames(contractsRead).contains("expand_ui_repair_scope"), "contract query preserves existing insertion grants");
+        String expanded = session.acceptToolCallJson("expand_ui_repair_scope", CompilerProtocolJson.encode(Map.of("insertion", "N1")));
+        check(CompilerProtocolJson.intField(object(expanded), "semanticRepairs") == repairs, "permission expansion does not spend semantic budget");
+        check(toolNames(expanded).contains("construct_apply_repair_transaction"), "new slot must be writable only through constructors");
+        check(!expanded.contains("\"items\":{\"type\":\"object\"}"), "strict provider schemas cannot contain untyped object array items, even for forbidden dependencies");
+        String result = session.acceptToolCallJson("construct_apply_repair_transaction", construction(List.of(
+                cc("action", "action", Map.of("name", "IncrementAction", "fields", List.of())),
+                cc("button", "component", Map.of("name", "Button", "fields", List.of(
+                        Map.of("name", "text", "value", Map.of("text", "Increment")), Map.of("name", "onClick", "value", "action")), "children", List.of()))),
+                Map.of("patches", List.of(Map.of("slot", "R2", "operation", "insertChild",
+                        "payload", Map.of("index", 2, "source", "button"))), "dependencies", List.of())));
+        check(result.contains("\"accepted\":true"), "agent-issued insertion must finish the pair: " + result);
+        check(stringField(object(result), "deal").equals(DEAL), "UI repair must preserve exact DEAL bytes");
+        check(stringField(object(result), "dealUi").contains("Moved"), "original staged change must survive new-slot repair");
     }
 
     private static void interfaceChangeUsesMinimalChildInsertion() {
