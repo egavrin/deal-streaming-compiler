@@ -117,11 +117,11 @@ public final class CanonicalRefinementSessionTest {
                 + "export token themeClean: ThemeStyle = { value: \"clean\" };\n";
         String manifest = """
                 {"version":"deal-studio-agent-semantics-v1","packVersion":"test-v1",
-                 "themeTokens":["themeClean"],"components":{
-                   "Column":{"purpose":"Layout","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":["Text"],"constraints":[]},
-                   "Text":{"purpose":"Text","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":[],"constraints":[]},
-                   "Button":{"purpose":"Action","preferWhen":[],"avoidWhen":[],"visualWeight":"medium","commonSiblings":[],"constraints":[]},
-                   "Clock":{"purpose":"Clock ingress","preferWhen":[],"avoidWhen":[],"visualWeight":"low","commonSiblings":[],"constraints":[]}},
+                 "themeTokens":["themeClean"],"initialComponents":["Column","Text","Button"],"components":{
+                   "Column":{"purpose":"Layout","preferWhen":["layout"],"avoidWhen":["leaf"],"visualWeight":"low","commonSiblings":["Text"],"constraints":["typed contract"]},
+                   "Text":{"purpose":"Text","preferWhen":["label"],"avoidWhen":["number"],"visualWeight":"low","commonSiblings":[],"constraints":["typed contract"]},
+                   "Button":{"purpose":"Action","preferWhen":["action"],"avoidWhen":["display"],"visualWeight":"medium","commonSiblings":[],"constraints":["typed contract"]},
+                   "Clock":{"purpose":"Clock ingress","preferWhen":["time ingress"],"avoidWhen":["static"],"visualWeight":"low","commonSiblings":[],"constraints":["typed contract"]}},
                  "globalRules":["Use typed contracts"]}
                 """;
         new CanonicalRefinementSession(DEAL, UI, pack, "./ui.pack", "Refine layout", 4, 1)
@@ -953,6 +953,8 @@ public final class CanonicalRefinementSessionTest {
         var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build an interactive counter", 12, 3).useConstructionApi();
         String request = session.nextRequestJson();
         check(toolNames(request).equals(List.of("construct_apply_deal_batch")), "one source-free batch must replace bootstrap rounds");
+        check(stringField(object(request), "surfaceVersion").equals("agent-surface-v15"), "production construction must report the v15 surface");
+        check(stringField(object(request), "constructionProtocol").equals("compiler-construction-v1"), "production construction must never report compatibility mode");
         check(stringField(object(request), "reasoningEffort").equals("low"), "baseline reasoning must stay explicit");
         var fastSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 8, 2)
                 .useConstructionApi().withReasoningEffort("none", "none");

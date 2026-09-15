@@ -70,6 +70,15 @@ public final class CanonicalRefinementSession {
         var themeTokens = CompilerProtocolJson.requireArray(CompilerProtocolJson.field(manifest, "themeTokens"), "themeTokens");
         if (themeTokens.items().isEmpty() || themeTokens.items().stream().anyMatch(value -> !(value instanceof CanonicalJson.Str text) || !tokenNames.contains(text.value())))
             throw new IllegalArgumentException("Agent semantics contains an invalid theme token reference");
+        var initialComponents = CompilerProtocolJson.requireArray(
+                CompilerProtocolJson.field(manifest, "initialComponents"), "initialComponents");
+        var initialNames = initialComponents.items().stream().map(value -> {
+            if (!(value instanceof CanonicalJson.Str text) || !packNames.contains(text.value()))
+                throw new IllegalArgumentException("Agent semantics contains an invalid initial component");
+            return text.value();
+        }).collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (initialNames.isEmpty() || initialNames.size() != initialComponents.items().size())
+            throw new IllegalArgumentException("Agent semantics initial component selection is incomplete or duplicated");
         agentSemantics = manifest;
         return this;
     }
@@ -94,6 +103,8 @@ public final class CanonicalRefinementSession {
             if (field.equals("commonSiblings") && values.items().stream()
                     .map(CanonicalJson.Str.class::cast).map(CanonicalJson.Str::value).anyMatch(value -> !packNames.contains(value)))
                 throw new IllegalArgumentException("Agent semantics commonSiblings references an unknown component for " + component);
+            if (!field.equals("commonSiblings") && values.items().isEmpty())
+                throw new IllegalArgumentException("Agent semantics " + field + " is empty for component " + component);
         }
         var example = semantics.entries().stream().filter(entry -> entry.key().equals("microExample"))
                 .map(CanonicalJson.Entry::value).findFirst();
@@ -148,7 +159,7 @@ public final class CanonicalRefinementSession {
         repairV2 = true;
         return this;
     }
-    private static final String AGENT_SURFACE_VERSION = "agent-surface-v13";
+    private static final String AGENT_SURFACE_VERSION = "agent-surface-v15";
     private static final int MAX_FOUNDATION_RECORD_DECLARATIONS = 8;
     private static final int MAX_SUPPORTING_DECLARATIONS_PER_BATCH = 2;
     private static final int MAX_ACTION_HANDLERS_PER_BATCH = 4;
@@ -1015,7 +1026,8 @@ public final class CanonicalRefinementSession {
         }
         if (generation && forcedArtifact.equals("dealui")) {
             context.put("componentPack", compactComponentPack());
-            if (agentSemantics != null) context.put("agentSemantics", agentSemantics);
+            if (agentSemantics != null) context.put("agentSemantics", initialAgentSemantics());
+            if (!requestedUiContracts.isEmpty()) context.put("requestedContracts", requestedUiContracts);
         }
         if (uiEditSurface == null && repairWorkspace == null) context.put("previousToolResults", agentTranscript());
         if (repairWorkspace != null && !transcript.isEmpty()
@@ -1196,6 +1208,7 @@ public final class CanonicalRefinementSession {
             if (uiEditSurface != null && requestedUiContracts.isEmpty()) result.add(queryUiContractsTool());
         }
         if (!uiOperations.isEmpty()) {
+            if (generation && agentSemantics != null && requestedUiContracts.isEmpty()) result.add(queryUiContractsTool());
             result.add(transactionTool(
                     "apply_deal_ui_changes", "Apply one atomic Deal UI ChangeSet.", uiOperations, generation));
         }
@@ -3063,9 +3076,14 @@ public final class CanonicalRefinementSession {
     private Map<String, Object> compactComponentPack() {
         var snapshot = inspection.componentPack();
         if (snapshot == null) return Map.of();
+        Set<String> selected = generation && forcedArtifact.equals("dealui") && agentSemantics != null
+                ? initialComponentNames()
+                : snapshot.components().stream().map(CanonicalCompiler.ComponentSnapshot::name)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
         return Map.of(
                 "version", snapshot.version(),
-                "components", snapshot.components().stream().map(component -> constructionApi
+                "components", snapshot.components().stream().filter(component -> selected.contains(component.name()))
+                        .map(component -> constructionApi
                         ? constructionComponentContract(component)
                         : Map.<String, Object>of(
                         "name", component.name(),
@@ -3078,6 +3096,23 @@ public final class CanonicalRefinementSession {
                         "events", component.events(),
                         "capabilities", component.capabilities())).toList(),
                 "tokens", snapshot.tokens());
+    }
+
+    private Set<String> initialComponentNames() {
+        if (agentSemantics == null) return Set.of();
+        return CompilerProtocolJson.requireArray(
+                        CompilerProtocolJson.field(agentSemantics, "initialComponents"), "initialComponents")
+                .items().stream().map(CanonicalJson.Str.class::cast).map(CanonicalJson.Str::value)
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private Map<String, Object> initialAgentSemantics() {
+        Set<String> selected = initialComponentNames();
+        return Map.of(
+                "version", CompilerProtocolJson.stringField(agentSemantics, "version"),
+                "globalRules", CompilerProtocolJson.field(agentSemantics, "globalRules"),
+                "themeTokens", CompilerProtocolJson.field(agentSemantics, "themeTokens"),
+                "components", semanticHintsFor(selected));
     }
 
     private CanonicalJson.Obj semanticHintsFor(Set<String> components) {
