@@ -50,6 +50,17 @@ public final class CanonicalRefinementSession {
     private int portionRejections;
     private final Set<String> rejectedPortions = new LinkedHashSet<>();
     private CanonicalJson.Obj agentSemantics;
+    private String hostCapabilityInstructions = "";
+
+    /** Selects a compiler-owned, versioned host ABI without accepting caller-authored prompt text. */
+    public CanonicalRefinementSession withHostCapabilityProfile(String profile) {
+        if (rounds != 0 || !lastIssuedRequest.isEmpty())
+            throw new IllegalStateException("Configure host capabilities before model requests");
+        if (!profile.equals("android-host-effects-v1"))
+            throw new IllegalArgumentException("Unsupported host capability profile " + profile);
+        hostCapabilityInstructions = ConstructionSurface.ANDROID_HOST_EFFECTS_V1;
+        return this;
+    }
 
     /** Attaches the versioned, checked companion semantics before the first model request. */
     public CanonicalRefinementSession withAgentSemantics(String manifestJson) {
@@ -553,7 +564,7 @@ public final class CanonicalRefinementSession {
     }
 
     private String instructions() {
-        if (!portionTool.isEmpty()) return ConstructionSurface.PORTION_INSTRUCTIONS;
+        if (!portionTool.isEmpty()) return withHostCapabilities(ConstructionSurface.PORTION_INSTRUCTIONS);
         if (repairV2 && repairWorkspace != null && !constructionApi)
             return "Repair only the compiler-issued repairGroup through the granted source-edit API. "
                     + "Use apply_repair_transaction with source strings in the typed payload fields, not constructor handles. "
@@ -566,13 +577,13 @@ public final class CanonicalRefinementSession {
                     ? "Deal UI is declarative: no indexing, array literals, assignment or arbitrary calls. Use ForEach for collections and the supplied component contracts. " + DEAL_UI_SOURCE_SYNTAX
                     : DEAL_EDIT_CONTRACT);
         if (repairV2 && repairWorkspace != null && constructionRepair == null)
-            return (repairArtifact.equals("dealui") ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
+            return withHostCapabilities(repairArtifact.equals("dealui") ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
                     + "\nThe current repairGroup supersedes active-slot instructions. Use expand_repair_scope to request an offered grant, then construct_apply_repair_transaction. Change only granted slots. Add only dependencies with granted obligation ids. Empty patches or dependencies arrays mean no changes in that category. Never resubmit the original application batch.";
-        if (constructionRepair != null) return (constructionRepairUi ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
+        if (constructionRepair != null) return withHostCapabilities(constructionRepairUi ? ConstructionSurface.UI_INSTRUCTIONS : ConstructionSurface.INSTRUCTIONS)
                 + "\nRepair constructorRepair.target and only the necessary consumers listed in constructorRepair.editable. Send complete replacement calls plus necessary NEW dependencies. The complete compiler-issued editable group may be repaired atomically. You may insert a new local into the editable enclosing block when fixing an invalid value/statement use. Independent calls and transaction arguments are immutable. Never regenerate the application. A VALUE is not a DECLARATION; use declareRecord for a type, record for a value. Text properties accept inline {\"text\":\"...\"}.";
         if (constructionApi) {
             if (repairWorkspace != null ? repairArtifact.equals("dealui") : forcedArtifact.equals("dealui"))
-                return ConstructionSurface.UI_INSTRUCTIONS;
+                return withHostCapabilities(ConstructionSurface.UI_INSTRUCTIONS);
             String stage = repairWorkspace != null
                     ? "Repair only the active slot using construct_patch_repair_slot. Do not rebuild the application or accepted siblings."
                     : generation && generationStage().equals("bootstrap")
@@ -580,7 +591,7 @@ public final class CanonicalRefinementSession {
                     : generation && generationStage().equals("declarations")
                     ? "The foundation is already committed. Use construct_append_deal_behavior to add missing action-handler pairs and supporting declarations. Do not resend AppState or initialState. Set final=true when behavior is complete."
                     : "Use only the currently authorized edit operations; do not rebuild unchanged declarations.";
-            return ConstructionSurface.INSTRUCTIONS + "\n" + stage;
+            return withHostCapabilities(ConstructionSurface.INSTRUCTIONS) + "\n" + stage;
         }
         if (generation) {
             if (sourceBatchApi && generationStage().equals("bootstrap"))
@@ -598,6 +609,10 @@ public final class CanonicalRefinementSession {
         if (forcedArtifact.equals("deal")) return REFINEMENT_SYSTEM_PROMPT + DEAL_EDIT_CONTRACT;
         if (forcedArtifact.equals("dealui")) return REFINEMENT_SYSTEM_PROMPT + DEAL_UI_EDIT_CONTRACT + DEAL_UI_SOURCE_SYNTAX;
         return REFINEMENT_SYSTEM_PROMPT;
+    }
+
+    private String withHostCapabilities(String instructions) {
+        return hostCapabilityInstructions.isEmpty() ? instructions : instructions + "\n" + hostCapabilityInstructions;
     }
 
     public String acceptToolCallJson(String name, String argumentsJson) {

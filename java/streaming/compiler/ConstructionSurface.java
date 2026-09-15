@@ -12,6 +12,26 @@ import static deal.compiler.CompilerProtocolJson.*;
 
 /** Adapts authorized semantic transactions to compiler construction calls, never source strings. */
 final class ConstructionSurface {
+    static final String ANDROID_HOST_EFFECTS_V1 = """
+            The selected host profile supports only these optional declared platform capabilities:
+            map.navigation, calendar.events.owned, calendar.open. Declare one only when the user explicitly requests it.
+            All platform requests and host completions use one nominal action and one synchronous update:
+            PlatformHostAction has exactly operation:string, requestId:string, status:string, message:string,
+            originLatitudeE6:int, originLongitudeE6:int, destinationLatitudeE6:int, destinationLongitudeE6:int,
+            title:string, startEpochMinute:int, durationMinutes:int, reminderMinutes:int, eventId:string,
+            confirmed:boolean. Register PlatformHostAction and its onPlatformHostAction update in actionHandlers.
+            Deal UI may bind it only with status "request". Android returns the same action with status "success",
+            "cancelled", "unavailable", or "error". Set pending state on request and consume terminal status in the update.
+            Operations are "map.navigate", "calendar.insert", "calendar.open", and "calendar.remove-owned".
+            Map coordinates are signed millionths of a degree (E6), with explicit origin and destination. Derive origin
+            from authoritative state such as the last reached item, not UI position. Calendar insert uses a positive
+            absolute startEpochMinute and durationMinutes, a non-negative reminderMinutes, and retains the eventId
+            returned on success. Calendar removal may pass one retained created eventId, or blank to remove all events
+            in this app's host-owned ledger; set confirmed true only from an explicit confirmation action. Never
+            synthesize event identity, expose completion status through UI bindings, or request broad calendar deletion.
+            A declared platform capability also requires a reachable CapabilityNotice whose onRequest binds the same
+            request action; query its compiler contract when it is not already in the selected UI surface.
+            """;
     static final String PORTION_INSTRUCTIONS = """
             Build the requested application using only the granted compiler API tools. Never return source code or prose.
             A constructor transaction spans multiple responses. All staged handles remain available until finalization.
