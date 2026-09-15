@@ -528,6 +528,11 @@ public final class CanonicalRefinementSession {
         request.put("reasoningEffort", forcedArtifact.equals("dealui") ? uiReasoningEffort : dealReasoningEffort);
         request.put("input", input);
         request.put("tools", tools);
+        if (tools.stream().anyMatch(tool -> tool.get("name").equals("stage_constructor_calls"))
+                && !request.get("reasoningEffort").equals("none")) {
+            request.put("reasoningExhaustionRetry", Map.of("maxAttempts", 1,
+                    "reasoningEffort", "none", "maxOutputTokens", 8192));
+        }
         // Reasoning and tool arguments share the provider output budget. Keep the sixteen-call
         // staging cap while reserving bounded headroom for reasoning before argument emission.
         request.put("maxOutputTokens", tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_batch", "apply_deal_batch").contains(tool.get("name")))

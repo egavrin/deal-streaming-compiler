@@ -1043,10 +1043,14 @@ public final class CanonicalRefinementSessionTest {
                 "provider-visible staging guidance must retain the hard portion boundary");
         check(CompilerProtocolJson.intField(object(portionRequest), "maxOutputTokens") == 16384,
                 "reasoning-enabled staging needs a bounded reasoning plus argument budget, retaining sixteen calls");
+        check(portionRequest.contains("\"reasoningExhaustionRetry\"") && portionRequest.contains("\"maxAttempts\":1"),
+                "reasoning staging explicitly grants one transport-only nonthinking retry");
         var nonThinkingPortions = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3)
                 .useConstructionApi().withConstructionPortions().withReasoningEffort("none", "none");
         check(CompilerProtocolJson.intField(object(nonThinkingPortions.nextRequestJson()), "maxOutputTokens") == 8192,
                 "non-thinking staging retains the smaller budget");
+        check(!nonThinkingPortions.nextRequestJson().contains("reasoningExhaustionRetry"),
+                "nonthinking requests cannot recursively grant exhaustion retries");
         check(!stringField(object(portionRequest), "instructions").contains("construct_apply_deal_batch")
                 && !stringField(object(portionRequest), "instructions").contains("same batch"),
                 "portion instructions must not contain obsolete single-batch delivery rules");
