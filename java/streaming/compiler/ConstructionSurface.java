@@ -12,11 +12,47 @@ import static deal.compiler.CompilerProtocolJson.*;
 
 /** Adapts authorized semantic transactions to compiler construction calls, never source strings. */
 final class ConstructionSurface {
+    static final String PORTION_INSTRUCTIONS = """
+            Build the requested application using only the granted compiler API tools. Never return source code or prose.
+            A constructor transaction spans multiple responses. All staged handles remain available until finalization.
+            stage_constructor_calls APPENDS new ids; it never changes an existing id. Prefer portions of 1..16 calls.
+            To modify or finish an existing constructor: inspect_staged_call, then replace_staged_call.
+            Read up to sixteen needed constructors together. After inspection, perform the required write or finalize;
+            do not repeatedly inspect unchanged data. A replacement retains the selected id and result kind.
+            finish_constructor_calls supplies ONLY transaction arguments referencing staged handles. It compiles the accumulated graph.
+            Do not restage existing calls when finishing. Rejected portions do not change the staged graph.
+            Use the current ticket from the tool schema. Instructions about staged nodes refer to this transaction, not a previous app.
+
+            Constructors form a flat dependency graph. Every computed expression is its own constructor with an id.
+            Operands may be a handle string, inline integer/boolean, {"text":"literal"}, {"path":["variable","field"]},
+            or {"emptyArray":true} where the language permits it. Never nest binary/call/record constructors inside operands.
+            Use a binary constructor and refer to its id, not {"binary":...}. Names and path segments are identifiers, not expressions.
+            A constructor id is not a program variable: local creates a statement, while {"path":["name"]} accesses its variable.
+            Block statements must reference statement/block constructors, not values or declarations.
+            returnRecord constructs a block returning a record; use its id directly as an initializer or handler body.
+            if/while are statements with block bodies, not conditional values. For conditional values, use a fresh local and assignments.
+            Explicit scalar types are int, number, boolean, string and bytes. Arrays use T[]; nominal types require declarations.
+            Build arrays using a typed fresh local, emptyArray, index and assign. State/action are borrowed: return replacement state,
+            preserving unchanged fields, and mutate only fresh local data. UI updates use declareUpdate with state and action parameters.
+            Register helper declarations and action/handler pairs in the final transaction arguments. Unreferenced calls install nothing.
+            Native controls emit only their documented payload. Buttons do not read sibling controls; editable drafts belong in state.
+
+            For Deal UI, use only the exact supplied component pack and frozen AppInterface. Do not generate new state or handlers.
+            component children reference UI nodes; text operands are property values, not visible UI nodes.
+            Use IntText/IntStat for numbers, Text for strings. Bind all required actions and host capabilities through reachable nodes.
+            UI constants are paths such as {"path":["ui","spaceMd"]}. Action properties can use
+            {"action":{"name":"ExistingAction","fields":[]}}. Event data is {"path":["payload"]} where documented.
+            Dynamic collections use forEach with a state collection path, declared item type, and item-rooted key path.
+            Deal UI has no indexing, array literals, assignment or arbitrary calls. A condition must be boolean; comparisons use binary.
+            A complete root has AppTheme containing Root and its content. A subtree is one UI node. Use native adaptive layout components.
+            Omit unneeded optional properties. Staging is not semantic acceptance; final compiler diagnostics determine validity.
+            A ? property may be omitted; component defaults are applied by the runtime. Defaults are not exhaustive allowed values.
+            """;
     static final String UI_INSTRUCTIONS = """
             You are building ONLY Deal UI through the compiler API. DEAL is already compiled and frozen.
             Do not create state, initializers, records, functions or handlers. Bind existing actions from deal.interface.
             You MUST invoke the provided construct_* tool. A prose answer or source code is not consumed.
-            Prefer path(parts=["state","field"]) for state/member access. VALUE operands allow inline integers
+            Use {"path":["state","field"]} for state/member access. VALUE operands allow inline integers
             and booleans; strings remain handles. Use inline text operands for display strings. No indexing is permitted.
             Prefer inline VALUE operands to avoid redundant handles: {"text":"Ready"} is literal text,
             {"path":["state","count"]} is a state field, {"path":["payload"]} is event data.
@@ -24,14 +60,15 @@ final class ConstructionSurface {
             Component contracts encode props as property-name:type maps. A trailing ? in the contract key
             marks an optional property; omit ? when binding it. Missing parent means any; missing events
             or capabilities means empty. All pack components remain available, not a selected subset.
+            Properties marked ? may also have pack defaults. Omit them to keep those defaults.
+            defaults contains compiler-extracted values, not an exhaustive list of allowed values.
             Tool arguments have two fields: calls (a flat compiler constructor batch) and arguments (the granted edit).
             Every call has an id and op. Operand strings name ids in this batch, never source expressions.
             Order is irrelevant. Do not reuse inspected symbol/node ids as construction operands.
             Prefer inline text/integer/boolean operands instead of separate scalar calls.
-            The text constructor creates a VALUE, never a visible Text node. A component named Text creates a UI node.
+            A component named Text creates a visible label. Inline text is only its property value.
             Every children entry must point to a component, when or forEach, never a scalar value or text constructor.
-            reference(name=state) plus field(object=<state id>,name=<field>) binds state data.
-            reference(name=ui) plus field binds an exact UI constant from the pack if its property needs one.
+            Use inline paths for both state data and exact UI constants from the pack.
             Token properties such as spacing require {"path":["ui","spaceMd"]}, NOT {"text":"spaceMd"}.
             action(name=<existing action type>,fields=[...]) creates an Action value, NOT a class declaration.
             Component action properties may inline {"action":{"name":"ExistingAction","fields":[]}} instead of a separate action handle.
@@ -41,10 +78,11 @@ final class ConstructionSurface {
             uiBody(children=[UI ids]) produces the result handle for replaceViewBody or a repair body slot.
             A single UI node is also a valid view body, equivalent to uiBody containing that one node.
             A subtree replacement uses a single component/when/forEach result instead of uiBody.
-            when and forEach build conditional and dynamic children. No arrays, indexing, assignment or arbitrary calls.
+            when and forEach build conditional and dynamic children. forEach.collection and forEach.key accept inline paths.
+            Deal UI expressions cannot index, assign, call arbitrary functions or construct arrays.
+            JSON arrays in this API contain constructor records, path segments or child handles; they are not Deal UI array expressions.
             Minimal constructor example (API usage only, not an application template):
-            {"calls":[{"id":"label","op":"text","value":"Ready"},
-            {"id":"node","op":"component","name":"Text","fields":[{"name":"value","value":"label"}],"children":[]},
+            {"calls":[{"id":"node","op":"component","name":"Text","fields":[{"name":"value","value":{"text":"Ready"}}],"children":[]},
             {"id":"surface","op":"component","name":"Root","fields":[],"children":["node"]},
             {"id":"theme","op":"component","name":"AppTheme","fields":[],"children":["surface"]},
             {"id":"root","op":"uiBody","children":["theme"]}],
@@ -106,7 +144,8 @@ final class ConstructionSurface {
             Use that reference in the returning record. Blocks contain statement or block handles, never VALUE handles.
             local/assign/return/if/while build statements; block groups statement handles. declareRecord and
             declareFunction build declarations; declareUpdate builds a framework update handler. Use explicit types.
-            Scalar type names are int, number, boolean, string, bytes and void (return type only).
+            Scalar type names are int, number, boolean, string and bytes. void is not a built-in DEAL type.
+            Helpers in this constructor protocol must return an explicitly typed value; do not introduce dummy void helpers.
             Nominal type names must name declared classes; use boolean, not bool. Array types use T[], for example int[] or Item[].
             Use emptyArray for an array value, record for a nominal object value, never a numeric placeholder or a declaration handle.
             Prefer {"emptyArray":true} for an empty array VALUE directly in fields[].value or local.value.
@@ -161,10 +200,23 @@ final class ConstructionSurface {
         result.put("name", "construct_" + original.get("name"));
         result.put("description", "Use compiler construction calls to perform the currently authorized " + original.get("name") + " transaction. No source text is accepted. " + original.get("description"));
         result.put("strict", true);
-        var calls = ((Map<?, ?>) CanonicalConstruction.contract(ui).get("properties")).get("calls");
+        var contract = ui && bodyOperationsOnly(schema) ? CanonicalConstruction.bodyContract() : CanonicalConstruction.contract(ui);
+        var calls = ((Map<?, ?>) contract.get("properties")).get("calls");
         result.put("parameters", DealConstruction.objectSchema(Map.of("calls", calls,
                 "arguments", adapt(schema, "", false))));
         return result;
+    }
+
+    private static boolean bodyOperationsOnly(Map<?, ?> schema) {
+        if (!(schema.get("properties") instanceof Map<?, ?> properties)
+                || !(properties.get("operations") instanceof Map<?, ?> operations)
+                || !(operations.get("items") instanceof Map<?, ?> items)
+                || !(items.get("anyOf") instanceof List<?> variants) || variants.isEmpty()) return false;
+        return variants.stream().allMatch(raw -> {
+            if (!(raw instanceof Map<?, ?> variant) || !(variant.get("properties") instanceof Map<?, ?> props)
+                    || !(props.get("operation") instanceof Map<?, ?> operation)) return false;
+            return Set.of("replaceViewBody", "replaceSubtree").contains(operation.get("const"));
+        });
     }
 
     private static boolean hasCode(Map<?, ?> schema, String key, boolean producer) {
@@ -196,7 +248,42 @@ final class ConstructionSurface {
     static CanonicalJson.Obj lower(CanonicalJson.Obj envelope, boolean ui, String operation) {
         var calls = requireArray(field(envelope, "calls"), "calls");
         var args = requireObject(field(envelope, "arguments"), "arguments");
+        var roots = new ArrayList<List<Object>>();
+        var kinds = new LinkedHashMap<List<Object>, DealConstruction.Kind>();
+        collectRootPaths(args, "", false, List.of(), roots, kinds, operation);
+        deal.compiler.ConstructionRepairWorkspace.validateRoots(envelope, roots, kinds, new CanonicalConstruction(ui));
         return requireObject(lowerValue(args, "", false, operation, calls, ui), "projected arguments");
+    }
+
+    static void checkRootBody(CanonicalJson.Obj envelope, String deal, String ui, String pack, String specifier) {
+        var arguments = requireObject(field(envelope, "arguments"), "arguments");
+        var raw = arguments.entries().stream().filter(e -> e.key().equals("operations"))
+                .map(CanonicalJson.Entry::value).findFirst().orElse(null);
+        if (!(raw instanceof CanonicalJson.Arr operations) || operations.items().size() != 1) return;
+        var operation = requireObject(operations.items().getFirst(), "operation");
+        if (!stringField(operation, "operation").equals("replaceViewBody")
+                || operation.entries().stream().anyMatch(e -> e.key().equals("target"))) return;
+        var batch = requireObject(toValue(Map.of("calls", field(envelope, "calls"),
+                "result", field(operation, "body"))), "construction");
+        new CanonicalConstruction(true).checkRootBodyAst(batch, deal, ui, pack, specifier);
+    }
+
+    private static void collectRootPaths(CanonicalJson.Value value, String key, boolean producer,
+            List<Object> path, List<List<Object>> roots, Map<List<Object>, DealConstruction.Kind> kinds, String operation) {
+        if (value instanceof CanonicalJson.Str && (CODE_FIELDS.contains(key) || producer)) {
+            roots.add(path); kinds.put(path, resultKind(key, producer, operation));
+        } else if (value instanceof CanonicalJson.Obj object) {
+            var op = object.entries().stream().filter(e -> e.key().equals("operation"))
+                    .map(CanonicalJson.Entry::value).findFirst().orElse(null);
+            String current = op instanceof CanonicalJson.Str s ? s.value() : operation;
+            for (var e : object.entries()) {
+                var next = new ArrayList<Object>(path); next.add(e.key());
+                collectRootPaths(e.value(), e.key(), key.equals("stateProducerBodies"), next, roots, kinds, current);
+            }
+        } else if (value instanceof CanonicalJson.Arr array) for (int i = 0; i < array.items().size(); i++) {
+            var next = new ArrayList<Object>(path); next.add(i);
+            collectRootPaths(array.items().get(i), key, producer, next, roots, kinds, operation);
+        }
     }
 
     static void validateHandleSyntax(CanonicalJson.Value value, String key, boolean producer) {
@@ -211,9 +298,7 @@ final class ConstructionSurface {
     private static CanonicalJson.Value lowerValue(CanonicalJson.Value value, String key, boolean producer,
             String operation, CanonicalJson.Arr calls, boolean ui) {
         if (value instanceof CanonicalJson.Str s && (CODE_FIELDS.contains(key) || producer)) {
-            DealConstruction.Kind kind = producer || key.equals("body") || key.equals("initialStateBody")
-                    ? DealConstruction.Kind.BLOCK : key.equals("expression") ? DealConstruction.Kind.VALUE
-                    : key.equals("source") && !operation.equals("addView") ? DealConstruction.Kind.UI : DealConstruction.Kind.DECLARATION;
+            DealConstruction.Kind kind = resultKind(key, producer, operation);
             var batch = requireObject(toValue(Map.of("calls", calls, "result", s.value())), "construction");
             return CanonicalJson.str(new CanonicalConstruction(ui).build(batch, kind));
         }
@@ -227,5 +312,11 @@ final class ConstructionSurface {
         if (value instanceof CanonicalJson.Arr array) return CanonicalJson.arr(array.items().stream()
                 .map(item -> lowerValue(item, key, producer, operation, calls, ui)).toList());
         return value;
+    }
+
+    private static DealConstruction.Kind resultKind(String key, boolean producer, String operation) {
+        return producer || key.equals("body") || key.equals("initialStateBody")
+                ? DealConstruction.Kind.BLOCK : key.equals("expression") ? DealConstruction.Kind.VALUE
+                : key.equals("source") && !operation.equals("addView") ? DealConstruction.Kind.UI : DealConstruction.Kind.DECLARATION;
     }
 }

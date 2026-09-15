@@ -64,7 +64,7 @@ final class ArgumentRepairWorkspace {
         return Map.of("name", "patch_tool_argument", "description",
                 issue.remove() ? "Confirm removal of the engine-selected unexpected property by returning its ticket only. All other data is immutable."
                         : "Replace only the engine-selected invalid argument. The rest of the pending tool call is immutable.",
-                "parameters", deal.compiler.DealConstruction.objectSchema(props));
+                "parameters", deal.compiler.DealConstruction.objectSchema(props), "strict", true);
     }
 
     String request(Map<String, Object> base) {
