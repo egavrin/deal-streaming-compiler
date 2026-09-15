@@ -66,6 +66,7 @@ public final class CanonicalRefinementSessionTest {
         constructorPortionsAreAtomicAndPreserveForwardHandles();
         portionRepairCanAddDependencyAtTransmissionTarget();
         constructorStagingConsumesInteractionBudget();
+        stagedReplaysAreIdempotentAndProgressAware();
         constructionProvenanceIsStructural();
         uiDiagnosticRetainsAstOwner();
         uiAstSupportsCompactOperands();
@@ -236,6 +237,37 @@ public final class CanonicalRefinementSessionTest {
                     : noProgress.acceptToolCallJson("replace_staged_call", CompilerProtocolJson.encode(Map.of("ticket", seedTicket, "replacement", seed.getFirst())));
         }
         check(next.contains("SC1001") && next.contains("no-progress-at-boundary") && next.contains("\"progressGrantedRounds\":0"), "read-only turns cannot extend the base budget");
+    }
+
+    private static void stagedReplaysAreIdempotentAndProgressAware() {
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 12, 3)
+                .useConstructionApi().withConstructionPortions();
+        session.nextRequestJson();
+        var seed = cc("original", "integer", Map.of("value", 7));
+        String emptyTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of()));
+        session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", emptyTicket, "calls", List.of(seed))));
+        String seedTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(List.of(seed))), "calls"));
+        var consumer = cc("consumer", "return", Map.of("value", "original"));
+        String mixed = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", seedTicket, "calls", List.of(seed, consumer))));
+        check(mixed.contains("\"idempotentStagedDuplicates\":1") && mixed.contains("\"lastRoundMadeProgress\":true"),
+                "identical replay plus a new consumer admits only the new handle and records progress");
+        var accepted = requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(List.of(seed, consumer))), "calls");
+        String ticket = deal.compiler.ConstructionRepairWorkspace.callsDigest(accepted);
+        String collision = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", ticket,
+                "calls", List.of(cc("uncommitted", "integer", Map.of("value", 1)), cc("original", "integer", Map.of("value", 9))))));
+        check(collision.contains("Duplicate staged constructor handle") && collision.contains("\"lastRoundMadeProgress\":false"),
+                "differing collision rejects even new siblings without changing accepted handles");
+        String inspected = session.acceptToolCallJson("inspect_staged_call", CompilerProtocolJson.encode(Map.of("ticket", ticket, "target", "original")));
+        check(stringField(object(inspected), "input").contains("\"value\":7"), "original value survives the collision");
+        String next = "";
+        for (int i = 4; i < 12; i++) {
+            next = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", ticket, "calls", List.of(seed, consumer))));
+        }
+        check(next.contains("SC1001") && next.contains("no-progress-at-boundary") && next.contains("\"progressGrantedRounds\":0")
+                && next.contains("\"idempotentStagedDuplicates\":17"), "replay-only portions preserve state and buy no extra rounds");
+        var frontend = new deal.ui.CanonicalConstruction(false);
+        check(frontend.build(object(CompilerProtocolJson.encode(Map.of("calls", accepted, "result", "consumer"))),
+                deal.compiler.DealConstruction.Kind.BLOCK).equals("return 7;"), "downstream reference resolves to original accepted handle");
     }
 
     private static void uiAstSupportsCompactOperands() {
