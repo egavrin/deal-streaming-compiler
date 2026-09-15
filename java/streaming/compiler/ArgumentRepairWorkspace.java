@@ -168,6 +168,11 @@ final class ArgumentRepairWorkspace {
             if (++unchanged >= 2) throw new IllegalArgumentException("Argument repair made no progress twice");
         } else unchanged = 0;
         var nextIssue = repairIssue(next);
+        // The staging array's maxItems bounds one model response, not compiler-owned localized
+        // dependencies added by this repair tool. Those are separately capped above and every
+        // resulting constructor is still checked against callSchema().
+        if (constructorSlot() && nextIssue != null && nextIssue.path().equals(List.of("calls")))
+            nextIssue = null;
         if (nextIssue != null) requireLocal(nextIssue);
         candidate = next;
         issue = nextIssue;

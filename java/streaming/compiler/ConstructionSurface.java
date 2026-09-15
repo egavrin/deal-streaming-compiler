@@ -35,7 +35,8 @@ final class ConstructionSurface {
     static final String PORTION_INSTRUCTIONS = """
             Build the requested application using only the granted compiler API tools. Never return source code or prose.
             A constructor transaction spans multiple responses. All staged handles remain available until finalization.
-            stage_constructor_calls APPENDS new ids; it never changes an existing id. Prefer portions of 1..16 calls.
+            stage_constructor_calls APPENDS new ids; it never changes an existing id. Every response MUST contain 1..16 calls.
+            Stop after sixteen even when more constructors are needed; continue them in the next compiler-issued request.
             To modify or finish an existing constructor: inspect_staged_call, then replace_staged_call.
             Read up to sixteen needed constructors together. After inspection, perform the required write or finalize;
             do not repeatedly inspect unchanged data. A replacement retains the selected id and result kind.
