@@ -383,6 +383,9 @@ public final class CanonicalRefinementSession {
     private Status status = Status.REQUEST;
     private int rounds;
     private int writeRounds;
+    private static final int MAX_CONSTRUCTION_ROUNDS = 24;
+    private boolean lastConstructionProgress;
+    private String roundTerminationReason = "";
     private int semanticRepairs;
     private int dealSemanticRepairs;
     private int dealUiSemanticRepairs;
@@ -459,7 +462,13 @@ public final class CanonicalRefinementSession {
             return resultJson();
         }
         if (argumentRepair != null) return argumentRepair.request(lastIssuedRequest);
-        if (writeRounds >= maxRounds) {
+        if (generation && constructionPortions && (rounds >= MAX_CONSTRUCTION_ROUNDS
+                || (rounds >= maxRounds && !lastConstructionProgress))) {
+            roundTerminationReason = rounds >= MAX_CONSTRUCTION_ROUNDS ? "hard-cap" : "no-progress-at-boundary";
+            fail("SC1001", "Construction round budget exhausted: " + roundTerminationReason);
+            return resultJson();
+        }
+        if (!(generation && constructionPortions) && writeRounds >= maxRounds) {
             fail("SC1001", "Refinement round budget exhausted");
             return resultJson();
         }
@@ -531,6 +540,7 @@ public final class CanonicalRefinementSession {
         request.put("maxOutputTokens", tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_batch", "apply_deal_batch").contains(tool.get("name")))
                 ? 32768 : tools.stream().anyMatch(tool -> Set.of("construct_apply_deal_ui_changes", "apply_deal_ui_changes").contains(tool.get("name"))) ? 16384 : 8192);
         request.put("round", rounds + 1);
+        request.put("constructionRoundBudget", constructionRoundBudget());
         request.put("semanticRepairs", semanticRepairs);
         request.put("repairProtocol", repairV2 ? "repair-workspace-v2" : "repair-workspace-v1");
         request.put("scopeExpansions", repairScopeExpansions);
@@ -711,6 +721,9 @@ public final class CanonicalRefinementSession {
                     || (name.equals("construct_repair_call") && constructionRepairUi) || forcedArtifact.equals("dealui") ? "dealui" : "deal");
             return nextRequestJson();
         }
+        String beforeDeal = deal;
+        String beforeUi = dealUi;
+        lastConstructionProgress = false;
         rounds++;
         if (values.stream().anyMatch(value -> !isReadOnlyQuery(string(value, "name")))) writeRounds++;
         issuedTools = List.of();
@@ -720,6 +733,7 @@ public final class CanonicalRefinementSession {
                     string(value, "name"),
                     CompilerProtocolJson.requireObject(field(value, "arguments"), "tool arguments"));
         }
+        if (status != Status.FAILED && (!deal.equals(beforeDeal) || !dealUi.equals(beforeUi))) lastConstructionProgress = true;
         return status == Status.REQUEST ? nextRequestJson() : resultJson();
     }
 
@@ -831,6 +845,7 @@ public final class CanonicalRefinementSession {
             }
             stagedSelections.clear();
             portionDiagnostic = Map.of();
+            lastConstructionProgress = stagedCalls.calls().items().size() > existing.items().size();
             addTranscript(name, Map.of("stage", "constructor-staging", "calls", stagedCalls.calls().items().size()));
             return;
         }
@@ -965,6 +980,7 @@ public final class CanonicalRefinementSession {
         result.put("deal", status == Status.COMPLETE ? deal : previousDeal);
         result.put("dealUi", status == Status.COMPLETE ? dealUi : previousDealUi);
         result.put("rounds", rounds);
+        result.put("constructionRoundBudget", constructionRoundBudget());
         result.put("semanticRepairs", semanticRepairs);
         result.put("argumentRepairRounds", argumentRepairRounds);
         result.put("repairMetrics", Map.of(
@@ -978,6 +994,14 @@ public final class CanonicalRefinementSession {
         result.put("inspection", inspection);
         result.put("transcript", transcript);
         return CompilerProtocolJson.encode(result);
+    }
+
+    private Map<String, Object> constructionRoundBudget() {
+        return Map.of("enabled", generation && constructionPortions, "baseLimit", maxRounds,
+                "hardLimit", MAX_CONSTRUCTION_ROUNDS, "baseRounds", Math.min(rounds, maxRounds),
+                "progressGrantedRounds", Math.max(0, rounds - maxRounds),
+                "lastRoundMadeProgress", lastConstructionProgress,
+                "terminationReason", status == Status.COMPLETE ? "complete" : roundTerminationReason);
     }
 
     private String input() {

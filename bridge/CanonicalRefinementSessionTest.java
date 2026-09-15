@@ -205,17 +205,37 @@ public final class CanonicalRefinementSessionTest {
     }
 
     private static void constructorStagingConsumesInteractionBudget() {
-        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 2, 3)
+        var session = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 12, 3)
                 .useConstructionApi().withConstructionPortions();
         session.nextRequestJson();
-        var first = List.of(cc("one", "integer", Map.of("value", 1)));
-        session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket",
-                deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of())), "calls", first)));
-        String stopped = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket",
-                deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(first)), "calls")),
-                "calls", List.of(cc("two", "integer", Map.of("value", 2))))));
-        check(stringField(object(stopped), "status").equals("failed") && stopped.contains("SC1001"),
-                "staging cannot evade the caller's interaction budget by continually adding new handles");
+        var accepted = new java.util.ArrayList<Map<String, Object>>();
+        String next = "";
+        for (int i = 0; i < 24; i++) {
+            String ticket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(accepted)), "calls"));
+            var call = cc("budget" + i, "integer", Map.of("value", i));
+            next = session.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", ticket, "calls", List.of(call))));
+            accepted.add(call);
+            check(i == 23 || stringField(object(next), "status").equals("request"), "accepted progress extends the base budget");
+        }
+        check(next.contains("SC1001") && next.contains("hard-cap") && next.contains("\"progressGrantedRounds\":12"),
+                "even uninterrupted progress stops at twenty-four rounds");
+        var noProgress = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Build a utility", 12, 3)
+                .useConstructionApi().withConstructionPortions();
+        noProgress.nextRequestJson();
+        var seed = List.of(cc("seed", "integer", Map.of("value", 1)));
+        noProgress.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket",
+                deal.compiler.ConstructionRepairWorkspace.callsDigest(CanonicalJson.arr(List.of())), "calls", seed)));
+        String seedTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(seed)), "calls"));
+        // Duplicate writes grant no progress (and may stop earlier under the separate rejection cap).
+        String duplicate = noProgress.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", seedTicket,
+                "calls", List.of(cc("seed", "integer", Map.of("value", 99))))));
+        check(duplicate.contains("Duplicate staged constructor handle") && duplicate.contains("\"lastRoundMadeProgress\":false"), "duplicates cannot buy rounds or replace accepted handles");
+        for (int i = 2; i < 12; i++) {
+            next = i % 2 == 0
+                    ? noProgress.acceptToolCallJson("inspect_staged_call", CompilerProtocolJson.encode(Map.of("ticket", seedTicket, "target", "seed")))
+                    : noProgress.acceptToolCallJson("replace_staged_call", CompilerProtocolJson.encode(Map.of("ticket", seedTicket, "replacement", seed.getFirst())));
+        }
+        check(next.contains("SC1001") && next.contains("no-progress-at-boundary") && next.contains("\"progressGrantedRounds\":0"), "read-only turns cannot extend the base budget");
     }
 
     private static void uiAstSupportsCompactOperands() {
@@ -1112,6 +1132,27 @@ public final class CanonicalRefinementSessionTest {
         String portionDone = portions.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", uiTicket,
                 "arguments", Map.of("operations", List.of(Map.of("operation", "replaceViewBody", "body", "root")), "final", true))));
         check(booleanField(object(portionDone), "accepted"), "public portion tools must publish a compiler-checked DEAL and UI pair");
+        var extended = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi().withConstructionPortions();
+        extended.nextRequestJson();
+        var extendedCalls = new java.util.ArrayList<Map<String, Object>>();
+        for (int i = 0; i < 11; i++) {
+            String ticket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(extendedCalls)), "calls"));
+            var padding = cc("padding" + i, "integer", Map.of("value", i));
+            extended.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", ticket, "calls", List.of(padding))));
+            extendedCalls.add(padding);
+        }
+        for (var part : List.of(foundation, behavior)) {
+            String ticket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(extendedCalls)), "calls"));
+            extended.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", ticket, "calls", part)));
+            extendedCalls.addAll(part);
+        }
+        String extendedTicket = deal.compiler.ConstructionRepairWorkspace.callsDigest(requireArray(CompilerProtocolJson.decode(CompilerProtocolJson.encode(extendedCalls)), "calls"));
+        extended.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", extendedTicket, "arguments", batchArguments)));
+        extended.acceptToolCallJson("stage_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", firstTicket, "calls", portionNodes)));
+        String extendedDone = extended.acceptToolCallJson("finish_constructor_calls", CompilerProtocolJson.encode(Map.of("ticket", uiTicket,
+                "arguments", Map.of("operations", List.of(Map.of("operation", "replaceViewBody", "body", "root")), "final", true))));
+        check(booleanField(object(extendedDone), "accepted") && extendedDone.contains("\"progressGrantedRounds\":4"),
+                "progress extensions finish both canonical artifacts beyond twelve rounds without regenerating accepted handles");
         var rootSession = CanonicalRefinementSession.greenfield(PACK, "./ui.pack", "Counter", 12, 3).useConstructionApi();
         rootSession.nextRequestJson();
         var badRoots = new java.util.LinkedHashMap<String, Object>(batchArguments);
